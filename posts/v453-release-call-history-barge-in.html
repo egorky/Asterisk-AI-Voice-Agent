@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>v4.5.3 GA Release: Call History, Barge-In Improvements & More | Asterisk AI Voice Agent</title>
+    <meta name="description" content="Announcing v4.5.3 GA release with Call History analytics, improved barge-in handling, additional model support, and RTP security hardening.">
+    <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>🤖 Asterisk AI Voice Agent</h1>
+            <p>Open-Source, Real-Time AI Voice Agents on Asterisk</p>
+            <nav>
+                <a href="../index.html">Blog Home</a>
+                <a href="https://github.com/hkjarral/Asterisk-AI-Voice-Agent">GitHub</a>
+                <a href="https://discord.gg/QhPSju6aCh">Discord</a>
+            </nav>
+        </div>
+    </header>
+    
+    <main class="container">
+        <article>
+            <h1>🎉 v4.5.3 GA Release: Call History, Barge-In & Pipeline-First Default</h1>
+            <div class="post-meta">Published on December 22, 2025 | 6 min read</div>
+            
+            <p>We're excited to announce the release of <strong>Asterisk AI Voice Agent v4.5.3</strong>—a major GA release that brings Call History analytics, dramatically improved barge-in handling, additional model support, and important security hardening for RTP streams.</p>
+
+            <p>This release represents months of production testing across all 5 provider types: Google Live, Deepgram, OpenAI Realtime, ElevenLabs, and our privacy-focused Local Hybrid pipeline.</p>
+
+            <h2>📊 Call History & Analytics</h2>
+
+            <p>The most requested feature is finally here. Every call is now logged with full conversation history, timing, and outcome data:</p>
+
+            <ul>
+                <li><strong>Full Call Logging</strong>: Every call saved with conversation history, caller info, and timestamps</li>
+                <li><strong>Per-Call Debugging</strong>: Review transcripts, tool executions, and errors directly from the Admin UI</li>
+                <li><strong>Search & Filter</strong>: Find calls by caller number, provider, context, or date range</li>
+                <li><strong>Export</strong>: Download call data as CSV or JSON for external analysis</li>
+            </ul>
+
+            <p>Access Call History from the Admin UI sidebar. Each call record includes the full conversation, which provider/pipeline handled it, latency metrics, and any tools that were executed.</p>
+
+            <blockquote>
+                <strong>Debugging Made Easy:</strong> No more digging through logs. Click any call to see exactly what happened—what the caller said, how the AI responded, and whether tools like transfer or email were executed successfully.
+            </blockquote>
+
+            <h2>🎤 Barge-In Improvements</h2>
+
+            <p>We've completely reworked how barge-in (interruption) handling works across all provider types:</p>
+
+            <ul>
+                <li><strong>Immediate Interruption</strong>: Agent audio stops instantly when the caller starts speaking</li>
+                <li><strong>Provider-Owned Turn-Taking</strong>: Full agents (Google, Deepgram, OpenAI, ElevenLabs) now handle VAD natively—the platform no longer fights with provider turn-taking</li>
+                <li><strong>Platform Flush</strong>: Local playback clears immediately on interruption signal</li>
+                <li><strong>Transport Parity</strong>: Works identically with both ExternalMedia RTP and AudioSocket transports</li>
+            </ul>
+
+            <p>The key insight: full agent providers have sophisticated server-side echo cancellation and turn-taking. Our previous local VAD was fighting this, causing issues. Now the platform defers to the provider for turn-taking decisions while handling local audio flush.</p>
+
+            <h2>🧠 Additional Model Support</h2>
+
+            <p>We've expanded the local AI backend options:</p>
+
+            <ul>
+                <li><strong>Faster Whisper</strong>: High-accuracy STT backend with GPU acceleration support</li>
+                <li><strong>MeloTTS</strong>: New neural TTS option for local pipelines with natural-sounding voices</li>
+                <li><strong>Model Hot-Swap</strong>: Switch STT/TTS/LLM models from the Dashboard without restarting containers</li>
+            </ul>
+
+            <p>The Admin UI Models page now lets you download and switch between models on the fly. No more editing YAML files and restarting services.</p>
+
+            <h2>🔒 RTP Security Hardening</h2>
+
+            <p>For production deployments using ExternalMedia RTP transport, we've added important security features:</p>
+
+            <ul>
+                <li><strong>Remote Endpoint Pinning</strong>: Lock RTP streams to the first remote endpoint seen, preventing audio hijacking</li>
+                <li><strong>Allowlist Support</strong>: Explicitly restrict which remote hosts can send RTP to your agent</li>
+                <li><strong>Cross-Talk Prevention</strong>: SSRC-based routing ensures audio from one call never leaks to another</li>
+            </ul>
+
+            <pre><code># New configuration options in ai-agent.yaml
+external_media:
+  lock_remote_endpoint: true
+  allowed_remote_hosts:
+    - 127.0.0.1
+    - 192.168.1.100</code></pre>
+
+            <h2>🚀 Pipeline-First Default</h2>
+
+            <p>The default provider is now <code>local_hybrid</code>—our privacy-focused pipeline that keeps audio processing local while using cloud LLMs:</p>
+
+            <ul>
+                <li><strong>Privacy-Focused</strong>: Audio never leaves your server (Vosk STT, Piper TTS locally)</li>
+                <li><strong>Cost-Effective</strong>: ~$0.001-0.003/minute (LLM tokens only)</li>
+                <li><strong>Pipeline-Aware Readiness</strong>: Health probes now correctly reflect pipeline component status</li>
+            </ul>
+
+            <p>You can still use any of the 5 full agent providers (Google Live, Deepgram, OpenAI Realtime, ElevenLabs, Local) by setting the context or default provider in your configuration.</p>
+
+            <h2>🔌 MCP Tool Integration</h2>
+
+            <p>Connect your AI agents to external services via the Model Context Protocol:</p>
+
+            <ul>
+                <li><strong>External Tools Framework</strong>: Define custom tools that call external APIs</li>
+                <li><strong>Admin UI Config</strong>: Configure MCP servers directly from the web interface</li>
+                <li><strong>Example: Weather Tool</strong>: Check out <code>examples/mcp/</code> for a working weather integration</li>
+            </ul>
+
+            <h2>📦 Upgrade Guide</h2>
+
+            <p>Upgrading from v4.5.x is straightforward:</p>
+
+            <pre><code># Pull latest code
+git pull origin main
+
+# Run preflight to update .env (now required)
+sudo ./preflight.sh --apply-fixes
+
+# Rebuild and restart
+docker compose build
+docker compose up -d</code></pre>
+
+            <blockquote>
+                <strong>Breaking Change:</strong> The legacy bundled Prometheus/Grafana monitoring stack has been removed. Use Call History for per-call debugging. If you need metrics, the engine still exposes <code>/metrics</code> for your own Prometheus instance.
+            </blockquote>
+
+            <h2>🧪 Validated Providers</h2>
+
+            <p>All 5 provider types have been validated in production with 100% success rate:</p>
+
+            <table>
+                <tr>
+                    <th>Provider</th>
+                    <th>Latency</th>
+                    <th>Status</th>
+                </tr>
+                <tr>
+                    <td>Google Live (Gemini 2.0)</td>
+                    <td>~2.3s</td>
+                    <td>✅ Validated</td>
+                </tr>
+                <tr>
+                    <td>Deepgram Voice Agent</td>
+                    <td>~1.2s</td>
+                    <td>✅ Validated</td>
+                </tr>
+                <tr>
+                    <td>OpenAI Realtime</td>
+                    <td>~1.3s</td>
+                    <td>✅ Validated</td>
+                </tr>
+                <tr>
+                    <td>ElevenLabs Agent</td>
+                    <td>~0.7s</td>
+                    <td>✅ Validated</td>
+                </tr>
+                <tr>
+                    <td>Local Hybrid</td>
+                    <td>~2.6s</td>
+                    <td>✅ Validated</td>
+                </tr>
+            </table>
+
+            <h2>🔗 Resources</h2>
+
+            <ul>
+                <li><a href="https://github.com/hkjarral/Asterisk-AI-Voice-Agent/releases/tag/v4.5.3">GitHub Release</a></li>
+                <li><a href="https://github.com/hkjarral/Asterisk-AI-Voice-Agent/blob/main/CHANGELOG.md">Full Changelog</a></li>
+                <li><a href="https://github.com/hkjarral/Asterisk-AI-Voice-Agent/blob/main/docs/INSTALLATION.md">Installation Guide</a></li>
+                <li><a href="https://discord.gg/QhPSju6aCh">Discord Community</a></li>
+            </ul>
+
+            <p>Questions or issues? Join our <a href="https://discord.gg/QhPSju6aCh">Discord server</a> or open an issue on GitHub. Happy building! 🚀</p>
+
+        </article>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2025 Asterisk AI Voice Agent | Open Source | MIT License</p>
+        </div>
+    </footer>
+</body>
+</html>
