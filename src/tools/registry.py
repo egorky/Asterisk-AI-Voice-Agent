@@ -422,6 +422,12 @@ After outputting a tool call, provide a brief spoken response.
             logger.warning(f"Could not import HangupCallTool: {e}")
         
         try:
+            from src.tools.telephony.exit_ari import ExitARITool
+            self.register(ExitARITool)
+        except ImportError as e:
+            logger.warning(f"Could not import ExitARITool: {e}")
+        
+        try:
             from src.tools.telephony.voicemail import VoicemailTool
             self.register(VoicemailTool)
         except ImportError as e:
