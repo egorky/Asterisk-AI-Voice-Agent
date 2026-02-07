@@ -118,6 +118,14 @@ class ExitARITool(Tool):
                 logger.debug("Setting channel variable", channel_id=channel_id, var=var_name, val=var_value)
                 await context.ari_client.set_channel_var(channel_id, var_name, str(var_value))
             
+            # CRITICAL: Set transfer_active flag BEFORE calling continue_in_dialplan.
+            # This prevents the engine from hanging up the caller channel when StasisEnd fires.
+            await context.update_session(
+                transfer_active=True,
+                transfer_state="continuing_in_dialplan",
+                transfer_target=f"{dialplan_context},{dialplan_extension},{dialplan_priority}"
+            )
+            
             # Continue in dialplan
             success = await context.ari_client.continue_in_dialplan(
                 channel_id,
