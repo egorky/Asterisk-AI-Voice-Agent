@@ -4,7 +4,7 @@ Exit ARI Tool - Continue call in dialplan.
 Allows AI to exit the Stasis application and return the call to the Asterisk dialplan.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from src.tools.base import Tool, ToolDefinition, ToolParameter, ToolCategory
 from src.tools.context import ToolExecutionContext
 import structlog
@@ -19,69 +19,64 @@ class ExitARITool(Tool):
     Use when:
     - AI's work is complete but call should continue
     - Need to return to dialplan for additional processing
-    - Want to hand off to IVR or other dialplan logic
-    
-    Unlike hangup_call which terminates the call, this tool returns control
-    to the Asterisk dialplan.
     """
     
     def __init__(
         self,
+        name: str = "exit_ari",
         context: str = "default",
         extension: str = "s",
-        priority: int = 1
+        priority: int = 1,
+        variables: Optional[Dict[str, str]] = None,
+        description: Optional[str] = None
     ):
-        """
-        Initialize exit_ari tool.
-        
-        Args:
-            context: Dialplan context to continue in (default: "default")
-            extension: Extension to continue at (default: "s")
-            priority: Priority to continue at (default: 1)
-        """
+        self._name = name
         self.default_context = context
         self.default_extension = extension
         self.default_priority = priority
+        self.default_variables = variables or {}
+        self._custom_description = description
     
     @property
     def definition(self) -> ToolDefinition:
+        desc = self._custom_description or (
+            "Exit the AI conversation and continue the call in the Asterisk dialplan. "
+            "Use this tool when you are done and want to return control to Asterisk."
+        )
         return ToolDefinition(
-            name="exit_ari",
-            description=(
-                "Exit the AI conversation and continue the call in the Asterisk dialplan. "
-                "Use this tool when:\\n"
-                "- Your work is complete but the call should continue\\n"
-                "- The caller needs to be transferred to an IVR or menu\\n"
-                "- Additional dialplan processing is required\\n"
-                "IMPORTANT: This does NOT hang up the call. The call will continue in the dialplan.\\n"
-                "If you want to end the call completely, use hangup_call instead."
-            ),
+            name=self._name,
+            description=desc,
             category=ToolCategory.TELEPHONY,
             requires_channel=True,
-            max_execution_time=5,
             parameters=[
                 ToolParameter(
                     name="farewell_message",
                     type="string",
-                    description="Optional farewell message to speak before exiting. If not provided, exits silently.",
+                    description="Optional farewell message to speak before exiting.",
                     required=False
                 ),
                 ToolParameter(
                     name="context",
                     type="string",
-                    description=f"Dialplan context to continue in (default: {self.default_context})",
+                    description=f"Dialplan context (default: {self.default_context})",
                     required=False
                 ),
                 ToolParameter(
                     name="extension",
                     type="string",
-                    description=f"Extension to continue at (default: {self.default_extension})",
+                    description=f"Extension (default: {self.default_extension})",
                     required=False
                 ),
                 ToolParameter(
                     name="priority",
                     type="integer",
-                    description=f"Priority to continue at (default: {self.default_priority})",
+                    description=f"Priority (default: {self.default_priority})",
+                    required=False
+                ),
+                ToolParameter(
+                    name="variables",
+                    type="object",
+                    description="Custom variables to set on the channel before continuing (e.g. {'STATUS': 'COMPLETED'}).",
                     required=False
                 )
             ]
@@ -92,105 +87,66 @@ class ExitARITool(Tool):
         parameters: Dict[str, Any],
         context: ToolExecutionContext
     ) -> Dict[str, Any]:
-        """
-        Exit ARI and continue in dialplan.
-        
-        Args:
-            parameters: {
-                farewell_message: Optional[str],
-                context: Optional[str],
-                extension: Optional[str],
-                priority: Optional[int]
-            }
-            context: Tool execution context
-        
-        Returns:
-            {
-                status: "success" | "error",
-                message: str,
-                will_exit: bool,
-                dialplan_location: str
-            }
-        """
         if not context.ari_client:
-            logger.error("No ARI client available for exit_ari", call_id=context.call_id)
-            return {
-                "status": "error",
-                "message": "Cannot exit ARI: no ARI client available",
-                "will_exit": False
-            }
+            return {"status": "error", "message": "No ARI client available"}
         
-        if not context.caller_channel_id:
-            logger.error("No caller channel ID for exit_ari", call_id=context.call_id)
-            return {
-                "status": "error",
-                "message": "Cannot exit ARI: no channel ID",
-                "will_exit": False
-            }
+        channel_id = context.caller_channel_id
+        if not channel_id:
+            return {"status": "error", "message": "No channel ID available"}
         
-        # Get parameters with defaults
+        # Get parameters with defaults from constructor
         farewell = parameters.get('farewell_message', '')
         dialplan_context = parameters.get('context') or self.default_context
         dialplan_extension = parameters.get('extension') or self.default_extension
         dialplan_priority = parameters.get('priority') or self.default_priority
         
-        dialplan_location = f"{dialplan_context},{dialplan_extension},{dialplan_priority}"
+        # Merge variables: parameters override defaults
+        custom_vars = self.default_variables.copy()
+        if isinstance(parameters.get('variables'), dict):
+            custom_vars.update(parameters['variables'])
         
         logger.info(
-            "🚪 Exit ARI requested",
-            call_id=context.call_id,
-            channel_id=context.caller_channel_id,
-            dialplan=dialplan_location,
-            has_farewell=bool(farewell)
+            "🚪 Exit ARI requested", 
+            call_id=context.call_id, 
+            dialplan=f"{dialplan_context},{dialplan_extension},{dialplan_priority}",
+            vars=list(custom_vars.keys())
         )
         
         try:
+            # Set variables first
+            for var_name, var_value in custom_vars.items():
+                logger.debug("Setting channel variable", channel_id=channel_id, var=var_name, val=var_value)
+                await context.ari_client.set_channel_var(channel_id, var_name, str(var_value))
+            
             # Continue in dialplan
             success = await context.ari_client.continue_in_dialplan(
-                context.caller_channel_id,
+                channel_id,
                 context=dialplan_context,
                 extension=dialplan_extension,
-                priority=dialplan_priority
+                priority=int(dialplan_priority)
             )
             
             if success:
-                logger.info(
-                    "✅ Successfully exited ARI to dialplan",
-                    call_id=context.call_id,
-                    dialplan=dialplan_location
-                )
-                
-                message = farewell if farewell else f"Continuing in dialplan at {dialplan_location}"
-                
+                logger.info("✅ Successfully continuing in dialplan", call_id=context.call_id)
                 return {
                     "status": "success",
-                    "message": message,
+                    "message": farewell or f"Continuing in dialplan at {dialplan_context},{dialplan_extension}",
                     "will_exit": True,
-                    "ai_should_speak": bool(farewell),
-                    "dialplan_location": dialplan_location
+                    "ai_should_speak": bool(farewell)
                 }
-            else:
-                logger.error(
-                    "❌ Failed to exit ARI",
-                    call_id=context.call_id,
-                    dialplan=dialplan_location
-                )
-                return {
-                    "status": "error",
-                    "message": "Failed to exit ARI",
-                    "will_exit": False
-                }
-                
+            return {"status": "error", "message": "Failed to exit ARI (ARI command failed)"}
+            
         except Exception as e:
-            logger.error(
-                "Error exiting ARI",
-                call_id=context.call_id,
-                error=str(e),
-                exc_info=True
-            )
-            return {
-                "status": "error",
-                "message": f"Error exiting ARI: {str(e)}",
-                "will_exit": False,
-                "error": str(e)
-            }
+            logger.error("Error exiting ARI", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+def create_exit_ari_tool(tool_name: str, config: Dict[str, Any]) -> ExitARITool:
+    """Factory function for metadata-driven creation from YAML."""
+    return ExitARITool(
+        name=tool_name,
+        context=config.get('context', 'default'),
+        extension=config.get('extension', 's'),
+        priority=int(config.get('priority', 1)),
+        variables=config.get('variables', {}),
+        description=config.get('description')
+    )

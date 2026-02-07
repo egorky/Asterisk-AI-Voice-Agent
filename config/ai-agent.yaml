@@ -623,6 +623,8 @@ contexts:
       - leave_voicemail
       - send_email_summary
       - request_transcript
+      - send_data
+      - exit_ari
   demo_elevenlabs:
     greeting: >-
       Hi {caller_name}, I'm using ElevenLabs premium voice technology. Ask me
@@ -885,6 +887,7 @@ pipelines:
       - leave_voicemail
       - send_email_summary
       - request_transcript
+      - exit_ari
     tts: local_tts
   local_hybrid_groq:
     llm: groq_llm
@@ -1272,6 +1275,55 @@ in_call_tools:
       intent: "intent"
     return_raw_json: false
     error_message: "I couldn't reach the automation service right now. Please try again."
+
+  # Custom tool: send_data - Sends date and time to workflow webhook
+  send_data:
+    kind: in_call_http_lookup
+    phase: in_call
+    enabled: true
+    is_global: false
+    timeout_ms: 5000
+    url: https://auto.sempitecno.com/webhook/96f2b229-58be-4e63-b4d0-c3bdf4fcbaa1
+    method: POST
+    headers:
+      Content-Type: application/json
+    query_params: {}
+    body_template: |
+      {
+        "fecha": "{fecha}",
+        "hora": "{hora}",
+        "call_id": "{call_id}",
+        "caller_number": "{caller_number}"
+      }
+    parameters:
+      - name: fecha
+        type: string
+        description: "Fecha seleccionada por el usuario en formato DD-MM-YYYY"
+        required: true
+      - name: hora
+        type: string
+        description: "Hora seleccionada por el usuario en formato HH:MM"
+        required: true
+    output_variables:
+      workflow_status: "message"
+    return_raw_json: false
+    description: >-
+      Llama a esta herramienta para enviar la fecha y la hora que el humano ha
+      seleccionado. El sistema iniciará el workflow automáticamente con los datos
+      proporcionados.
+    error_message: No pude enviar los datos al sistema. ¿Quieres que lo intente de nuevo?
+
+  # Custom tool: exit_ari - Exit ARI and return to dialplan
+  exit_ari:
+    kind: exit_ari
+    enabled: true
+    context: "default"
+    extension: "s"
+    priority: 1
+    variables:
+      FROM_AI: "true"
+      AI_EXIT: "success"
+    description: "Llama a esta herramienta para salir de la conversación y regresar al menú principal de Asterisk."
 tools:
   ai_identity:
     name: AI Agent

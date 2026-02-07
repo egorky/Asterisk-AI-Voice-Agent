@@ -546,9 +546,18 @@ After outputting a tool call, provide a brief spoken response.
                     logger.info(f"✅ Registered in-call HTTP tool: {tool_name}")
                 except Exception as e:  # noqa: BLE001 - best-effort tool bootstrapping from user config
                     logger.warning(f"Failed to create in-call HTTP tool {tool_name}: {e}", exc_info=True)
+            elif kind == 'exit_ari':
+                try:
+                    from src.tools.telephony.exit_ari import create_exit_ari_tool
+                    tool = create_exit_ari_tool(tool_name, tool_config)
+                    self.register_instance(tool)
+                    in_call_tool_count += 1
+                    logger.info(f"✅ Registered exit_ari tool from config: {tool_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to create exit_ari tool {tool_name}: {e}", exc_info=True)
         
         if in_call_tool_count > 0:
-            logger.info(f"📞 Initialized {in_call_tool_count} in-call HTTP tools from config")
+            logger.info(f"📞 Initialized {in_call_tool_count} in-call tools from config")
         self._in_call_http_init_cache.add(effective_key)
     
     def list_tools(self) -> List[str]:
