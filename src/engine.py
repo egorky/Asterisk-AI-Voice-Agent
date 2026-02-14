@@ -11655,7 +11655,13 @@ class Engine:
         return str(obj)
 
     async def _tools_definitions_handler(self, request):
-        """Return current tool definitions from the engine's tool registry (sanitized)."""
+        """Return current tool definitions from the engine's tool registry (sanitized).
+
+        SECURITY NOTE: This endpoint is bound to the health server (default 127.0.0.1:15000).
+        If HEALTH_BIND_HOST is set to 0.0.0.0, tool definitions become network-accessible.
+        Tool definitions do not contain secrets, but exposing internal tool schemas may be
+        undesirable in production. Restrict via firewall or keep HEALTH_BIND_HOST=127.0.0.1.
+        """
         try:
             from src.tools.registry import tool_registry
             defs = tool_registry.get_definitions()

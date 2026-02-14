@@ -124,7 +124,8 @@ class TelnyxLLMAdapter(LLMComponent):
         url = f"{base}/models"
         headers = _make_http_headers(api_key)
         await self._ensure_session()
-        assert self._session
+        if not self._session:
+            raise RuntimeError("Failed to create aiohttp session for Telnyx model fetch")
         async with self._session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10.0)) as resp:
             body = await resp.text()
             resp.raise_for_status()
@@ -157,7 +158,8 @@ class TelnyxLLMAdapter(LLMComponent):
                 logger.debug("Failed to refresh Telnyx model cache", error=str(exc), exc_info=True)
                 return raw
 
-        assert self._models_cache is not None
+        if self._models_cache is None:
+            return raw
         matches = [mid for mid in self._models_cache if str(mid).rsplit("/", 1)[-1] == raw]
         if len(matches) == 1:
             resolved = matches[0]
@@ -301,7 +303,8 @@ class TelnyxLLMAdapter(LLMComponent):
             raise RuntimeError("Telnyx LLM requires TELNYX_API_KEY")
 
         await self._ensure_session()
-        assert self._session
+        if not self._session:
+            raise RuntimeError("Failed to create aiohttp session for Telnyx LLM")
 
         # Telnyx supports external inference providers (e.g. OpenAI) via Integration Secrets.
         # If a user selects an external model, require api_key_ref to avoid confusing 400s.
@@ -339,7 +342,7 @@ class TelnyxLLMAdapter(LLMComponent):
                             logger.warning("Skipping non-in-call tool in pipeline schema", tool=tool_name)
                             continue
                     except Exception:
-                        pass
+                        logger.debug("Failed to check tool phase", tool=tool_name, exc_info=True)
                     tool_schemas.append(tool.definition.to_openai_schema())
                 else:
                     logger.warning("Tool not found in registry", tool=tool_name)
