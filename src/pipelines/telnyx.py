@@ -102,8 +102,9 @@ class TelnyxLLMAdapter(LLMComponent):
         self._pipeline_defaults = options or {}
         self._session_factory = session_factory
         self._session: Optional[aiohttp.ClientSession] = None
-        self._default_timeout = float(
-            self._pipeline_defaults.get("response_timeout_sec", provider_config.response_timeout_sec)
+        self._default_timeout = _safe_float(
+            self._pipeline_defaults.get("response_timeout_sec", provider_config.response_timeout_sec),
+            provider_config.response_timeout_sec,
         )
         self._models_cache: Optional[list[str]] = None
         self._models_cache_at: float = 0.0
@@ -344,7 +345,7 @@ class TelnyxLLMAdapter(LLMComponent):
                 tool = tool_registry.get(tool_name)
                 if tool:
                     try:
-                        from src.tools.base import ToolPhase
+                        from ..tools.base import ToolPhase
 
                         if getattr(tool.definition, "phase", ToolPhase.IN_CALL) != ToolPhase.IN_CALL:
                             logger.warning("Skipping non-in-call tool in pipeline schema", tool=tool_name)
