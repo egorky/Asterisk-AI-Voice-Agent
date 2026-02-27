@@ -2662,21 +2662,31 @@ class Engine:
                             value = (resp.get("value") or "").strip()
                             if value:
                                 setattr(session, attr, value)
-                    resp = await self.ari_client.send_command(
-                        "GET",
-                        f"channels/{caller_channel_id}/variable",
-                        params={"variable": "AAVA_CUSTOM_VARS_JSON"},
-                        tolerate_statuses=[404],
-                    )
-                    if isinstance(resp, dict):
-                        raw = (resp.get("value") or "").strip()
-                        if raw:
-                            try:
-                                data = json.loads(raw)
-                                if isinstance(data, dict):
-                                    session.outbound_custom_vars = data
-                            except Exception:
-                                pass
+                    
+                    # Fetch custom variables directly from in-memory tracking rather than relying on 
+                    # Asterisk string variables which can get truncated or fail JSON escaping on Local channels.
+                    if getattr(session, "outbound_attempt_id", None):
+                        meta = self._outbound_attempt_meta_by_attempt_id.get(session.outbound_attempt_id)
+                        if meta and meta.get("custom_vars"):
+                            session.outbound_custom_vars = meta.get("custom_vars")
+                        
+                        # Fallback try ARI if not in memory (e.g. engine reboot mid-call)
+                        if not getattr(session, "outbound_custom_vars", None):
+                            resp = await self.ari_client.send_command(
+                                "GET",
+                                f"channels/{caller_channel_id}/variable",
+                                params={"variable": "AAVA_CUSTOM_VARS_JSON"},
+                                tolerate_statuses=[404],
+                            )
+                            if isinstance(resp, dict):
+                                raw = (resp.get("value") or "").strip()
+                                if raw:
+                                    try:
+                                        data = json.loads(raw)
+                                        if isinstance(data, dict):
+                                            session.outbound_custom_vars = data
+                                    except Exception:
+                                        pass
                     # Improve call history readability: store outbound phone as caller_name too.
                     if session.caller_number and (session.caller_name or "").strip() in ("", self._outbound_extension_identity):
                         session.caller_name = f"Outbound {session.caller_number}"
