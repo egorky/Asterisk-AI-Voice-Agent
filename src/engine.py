@@ -8862,10 +8862,15 @@ class Engine:
         self._pipeline_forced[call_id] = bool(forced)
         # Pipelines: enable Asterisk talk detection so barge-in can trigger even when
         # ExternalMedia RTP delivery is paused/altered during channel playback.
-        try:
-            await self._enable_pipeline_talk_detect(session)
-        except Exception:
-            logger.debug("Pipeline talk detect enable failed", call_id=call_id, exc_info=True)
+        # TTS-only pipelines skip barge-in — the user's voice should not interrupt playback.
+        _pipeline_name = getattr(session, 'pipeline_name', None)
+        _pipeline_entry = (self.config.pipelines or {}).get(_pipeline_name) if _pipeline_name else None
+        is_tts_only_pipeline = getattr(_pipeline_entry, 'is_tts_only', False) if _pipeline_entry else False
+        if not is_tts_only_pipeline:
+            try:
+                await self._enable_pipeline_talk_detect(session)
+            except Exception:
+                logger.debug("Pipeline talk detect enable failed", call_id=call_id, exc_info=True)
         task = asyncio.create_task(self._pipeline_runner(call_id))
         self._pipeline_tasks[call_id] = task
         logger.info("Pipeline runner started", call_id=call_id, pipeline=session.pipeline_name)
@@ -9027,52 +9032,59 @@ class Engine:
                 logger.info("Pipeline TTS adapter session opened", call_id=call_id)
 
             # Pipeline-managed initial greeting (optional)
+            # TTS-only pipelines skip the greeting — tts_only_text IS the message to play.
             # Fallback chain: AI_CONTEXT → global llm_config → empty
             greeting = ""
             greeting_source = "none"
-            try:
-                # Priority 1: Check if context has a custom greeting
-                # Use session.context_name (persisted string) instead of transport_profile.context
-                context_name = getattr(session, 'context_name', None)
-                if context_name:
-                    context_config = self.transport_orchestrator.get_context_config(context_name)
-                    if context_config and context_config.greeting:
-                        greeting = self._apply_prompt_template_substitution(context_config.greeting.strip(), session)
-                        greeting_source = "context_injection"
-                        logger.info(
-                            "Pipeline greeting resolved from context",
-                            call_id=call_id,
-                            context=context_name,
-                            greeting_length=len(greeting),
-                        )
-                
-                # Priority 2: Fall back to global config greeting
-                if not greeting:
-                    global_greeting = (getattr(self.config.llm, "initial_greeting", None) or "").strip()
-                    if global_greeting:
-                        greeting = self._apply_prompt_template_substitution(global_greeting, session)
-                        greeting_source = "global_llm_config"
-                        logger.info(
-                            "Pipeline greeting resolved from global config",
-                            call_id=call_id,
-                            greeting_length=len(greeting),
-                        )
-                
-                # Log if no greeting found
-                if not greeting:
-                    logger.info(
-                        "Pipeline greeting not configured (no greeting will be played)",
-                        call_id=call_id,
-                    )
-            except Exception as exc:
-                logger.error(
-                    "Pipeline greeting resolution failed",
+            if getattr(pipeline, 'is_tts_only', False):
+                logger.info(
+                    "TTS-only pipeline: skipping greeting (tts_only_text will be played instead)",
                     call_id=call_id,
-                    error=str(exc),
-                    exc_info=True,
                 )
-                greeting = ""
-                greeting_source = "error"
+            else:
+                try:
+                    # Priority 1: Check if context has a custom greeting
+                    # Use session.context_name (persisted string) instead of transport_profile.context
+                    context_name = getattr(session, 'context_name', None)
+                    if context_name:
+                        context_config = self.transport_orchestrator.get_context_config(context_name)
+                        if context_config and context_config.greeting:
+                            greeting = self._apply_prompt_template_substitution(context_config.greeting.strip(), session)
+                            greeting_source = "context_injection"
+                            logger.info(
+                                "Pipeline greeting resolved from context",
+                                call_id=call_id,
+                                context=context_name,
+                                greeting_length=len(greeting),
+                            )
+                    
+                    # Priority 2: Fall back to global config greeting
+                    if not greeting:
+                        global_greeting = (getattr(self.config.llm, "initial_greeting", None) or "").strip()
+                        if global_greeting:
+                            greeting = self._apply_prompt_template_substitution(global_greeting, session)
+                            greeting_source = "global_llm_config"
+                            logger.info(
+                                "Pipeline greeting resolved from global config",
+                                call_id=call_id,
+                                greeting_length=len(greeting),
+                            )
+                    
+                    # Log if no greeting found
+                    if not greeting:
+                        logger.info(
+                            "Pipeline greeting not configured (no greeting will be played)",
+                            call_id=call_id,
+                        )
+                except Exception as exc:
+                    logger.error(
+                        "Pipeline greeting resolution failed",
+                        call_id=call_id,
+                        error=str(exc),
+                        exc_info=True,
+                    )
+                    greeting = ""
+                    greeting_source = "error"
             
             # Final pass: ensure greeting can safely reference template variables.
             if greeting:

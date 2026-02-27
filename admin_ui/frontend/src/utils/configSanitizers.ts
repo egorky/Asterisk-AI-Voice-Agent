@@ -20,3 +20,11 @@ export function sanitizeConfigForSave(config: any): any {
   return out;
 }
 
+/**
+ * Serialize a config object to YAML preserving UTF-8 characters (ñ, á, é, etc.)
+ * js-yaml v4 by default may escape non-ASCII chars; noCompatMode prevents that.
+ */
+import yaml from 'js-yaml';
+export function yamlDump(data: any): string {
+  return yaml.dump(data, { noRefs: true, lineWidth: -1, noCompatMode: true, allowUnicode: true } as any);
+}

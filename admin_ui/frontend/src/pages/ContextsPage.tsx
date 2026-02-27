@@ -3,7 +3,7 @@ import axios from 'axios';
 import { toast } from 'sonner';
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import yaml from 'js-yaml';
-import { sanitizeConfigForSave } from '../utils/configSanitizers';
+import { sanitizeConfigForSave, yamlDump } from '../utils/configSanitizers';
 import { Plus, Settings, Trash2, MessageSquare, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { YamlErrorBanner } from '../components/ui/YamlErrorBanner';
 import { ConfigSection } from '../components/ui/ConfigSection';
@@ -173,7 +173,7 @@ const ContextsPage = () => {
     const saveConfig = async (newConfig: any) => {
         try {
             const sanitized = sanitizeConfigForSave(newConfig);
-            const res = await axios.post('/api/config/yaml', { content: yaml.dump(sanitized) });
+            const res = await axios.post('/api/config/yaml', { content: yamlDump(sanitized) });
             setConfig(sanitized);
             const method = (res.data?.recommended_apply_method || 'restart') as 'hot_reload' | 'restart';
             setPendingChanges(method);
