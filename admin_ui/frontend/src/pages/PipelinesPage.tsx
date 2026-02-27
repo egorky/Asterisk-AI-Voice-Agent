@@ -244,10 +244,11 @@ const PipelinesPage = () => {
         const pipelineName = isNewPipeline ? pipelineForm.name : editingPipeline;
         if (!pipelineName) return;
 
+        const isTtsOnly = pipelineForm.type === 'tts_only';
         const normalizedForm = {
             ...pipelineForm,
-            stt: ensureModularKey(pipelineForm.stt || '', 'stt'),
-            llm: ensureModularKey(pipelineForm.llm || '', 'llm'),
+            stt: isTtsOnly ? 'none_stt' : ensureModularKey(pipelineForm.stt || '', 'stt'),
+            llm: isTtsOnly ? 'none_llm' : ensureModularKey(pipelineForm.llm || '', 'llm'),
             tts: ensureModularKey(pipelineForm.tts || '', 'tts'),
         };
 
@@ -257,18 +258,22 @@ const PipelinesPage = () => {
         }
 
         // Validate required components
-        if (!normalizedForm.stt || !normalizedForm.llm || !normalizedForm.tts) {
+        if (!isTtsOnly && (!normalizedForm.stt || !normalizedForm.llm || !normalizedForm.tts)) {
             toast.error('STT, LLM, and TTS providers are required');
             return;
         }
+        if (isTtsOnly && !normalizedForm.tts) {
+            toast.error('TTS provider is required for TTS-only pipelines');
+            return;
+        }
 
-        // Validate provider existence
+        // Validate provider existence (skip STT/LLM checks for TTS-only pipelines)
         const providers = config.providers || {};
-        if (!providers[normalizedForm.stt]) {
+        if (!isTtsOnly && !providers[normalizedForm.stt]) {
             toast.error(`STT provider '${normalizedForm.stt}' does not exist`);
             return;
         }
-        if (!providers[normalizedForm.llm]) {
+        if (!isTtsOnly && !providers[normalizedForm.llm]) {
             toast.error(`LLM provider '${normalizedForm.llm}' does not exist`);
             return;
         }
@@ -277,15 +282,15 @@ const PipelinesPage = () => {
             return;
         }
 
-        // Block full agents in modular slots
-        if (isFullAgentProvider(providers[normalizedForm.stt]) || isFullAgentProvider(providers[normalizedForm.llm]) || isFullAgentProvider(providers[normalizedForm.tts])) {
+        // Block full agents in modular slots (only for standard pipelines)
+        if (!isTtsOnly && (isFullAgentProvider(providers[normalizedForm.stt]) || isFullAgentProvider(providers[normalizedForm.llm]) || isFullAgentProvider(providers[normalizedForm.tts]))) {
             toast.error('Full-agent providers cannot be used in modular pipeline slots. Please select modular providers with a single capability.');
             return;
         }
 
-        // Basic compatibility check: ensure provider capabilities match roles
-        const sttCaps = providers[normalizedForm.stt]?.capabilities || [];
-        const llmCaps = providers[normalizedForm.llm]?.capabilities || [];
+        // Basic capability check (skip STT/LLM for TTS-only pipelines)
+        const sttCaps = !isTtsOnly ? (providers[normalizedForm.stt]?.capabilities || []) : [];
+        const llmCaps = !isTtsOnly ? (providers[normalizedForm.llm]?.capabilities || []) : [];
         const ttsCaps = providers[normalizedForm.tts]?.capabilities || [];
         if (sttCaps.length && !sttCaps.includes('stt')) {
             toast.error(`Provider '${normalizedForm.stt}' is not marked as STT-capable.`);
@@ -300,8 +305,8 @@ const PipelinesPage = () => {
             return;
         }
 
-        // Check for disabled providers
-        const components = ['stt', 'llm', 'tts'];
+        // Check for disabled providers (skip none_stt/none_llm for TTS-only)
+        const components = isTtsOnly ? ['tts'] : ['stt', 'llm', 'tts'];
         const disabledComponents: string[] = [];
 
         components.forEach(comp => {
@@ -369,10 +374,11 @@ const PipelinesPage = () => {
             mergedPipeline.options = { ...(mergedPipeline.options || {}), llm: portable };
         }
 
-        // Always normalize STT options for the selected STT provider. This prevents stale cloud STT keys
-        // (e.g., response_format/temperature/chunk_ms=4000) from breaking local_stt when users swap providers.
+        // Always normalize STT options for the selected STT provider (skip for TTS-only — no STT).
         mergedPipeline.options = { ...(mergedPipeline.options || {}) };
-        mergedPipeline.options.stt = normalizeSttOptions(mergedPipeline.stt, (mergedPipeline.options || {}).stt);
+        if (!isTtsOnly) {
+            mergedPipeline.options.stt = normalizeSttOptions(mergedPipeline.stt, (mergedPipeline.options || {}).stt);
+        }
 
         newConfig.pipelines[pipelineName] = mergedPipeline;
 

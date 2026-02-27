@@ -602,6 +602,30 @@ def _normalize_pipelines(config_data: Dict[str, Any]) -> None:
             continue
 
         if isinstance(raw_entry, dict):
+            pipeline_type = raw_entry.get("type", "standard")
+
+            # TTS-only pipelines use NoOp adapters for STT/LLM — no provider lookup needed.
+            if pipeline_type == "tts_only":
+                tts_component = raw_entry.get("tts")
+                if not tts_component:
+                    raise TypeError(
+                        f"TTS-only pipeline '{pipeline_name}' requires a 'tts' component."
+                    )
+                options_block = raw_entry.get("options") or {}
+                if not isinstance(options_block, dict):
+                    raise TypeError(
+                        f"Unsupported pipeline options type for '{pipeline_name}': {type(options_block).__name__}"
+                    )
+                normalized[pipeline_name] = {
+                    "type": "tts_only",
+                    "stt": "none_stt",
+                    "llm": "none_llm",
+                    "tts": tts_component,
+                    "tools": raw_entry.get("tools") or [],
+                    "options": options_block,
+                }
+                continue
+
             provider_hint = raw_entry.get("provider")
             provider_for_defaults = provider_hint or default_provider
             components = _compose_provider_components(provider_for_defaults)
@@ -613,6 +637,7 @@ def _normalize_pipelines(config_data: Dict[str, Any]) -> None:
                 )
 
             normalized_entry = {
+                "type": pipeline_type,
                 "stt": raw_entry.get("stt", components["stt"]),
                 "llm": raw_entry.get("llm", components["llm"]),
                 "tts": raw_entry.get("tts", components["tts"]),
