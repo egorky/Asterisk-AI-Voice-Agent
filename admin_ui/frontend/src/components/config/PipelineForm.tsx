@@ -255,106 +255,135 @@ const PipelineForm: React.FC<PipelineFormProps> = ({ config, providers, onChange
                     disabled={!isNew}
                     tooltip="Unique identifier for this pipeline."
                 />
+                <div className="space-y-2">
+                    <FormLabel>Pipeline Type</FormLabel>
+                    <select
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        value={localConfig.type || 'standard'}
+                        onChange={(e) => {
+                            const newType = e.target.value;
+                            if (newType === 'tts_only') {
+                                updateConfig({ type: 'tts_only', stt: 'none_stt', llm: 'none_llm' });
+                            } else {
+                                updateConfig({ type: 'standard', stt: localConfig.stt === 'none_stt' ? '' : localConfig.stt, llm: localConfig.llm === 'none_llm' ? '' : localConfig.llm });
+                            }
+                        }}
+                    >
+                        <option value="standard">Standard (STT + LLM + TTS)</option>
+                        <option value="tts_only">TTS Only (Broadcast)</option>
+                    </select>
+                    {localConfig.type === 'tts_only' && (
+                        <p className="text-xs text-muted-foreground">
+                            TTS-only pipelines play a pre-defined audio message and hang up. Configure the message template in the Context settings.
+                        </p>
+                    )}
+                </div>
             </div>
 
             <div className="space-y-4">
                 <h4 className="font-semibold">Components</h4>
 
-                <div className="space-y-2">
-                    <FormLabel>Speech-to-Text (STT)</FormLabel>
-                    <select
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                        value={localConfig.stt || ''}
-                        onChange={(e) => handleProviderChange('stt', e.target.value)}
-                    >
-                        <option value="">Select STT Provider...</option>
-                        {sttProviders.map(p => (
-                            <option key={p.value} value={p.value} disabled={p.disabled}>
-                                {p.label} {p.disabled ? '(Disabled)' : ''}
-                            </option>
-                        ))}
-                    </select>
-                    {/* AAVA-116: Show active backend for local_stt */}
-                    {localConfig.stt?.includes('local') && localAIStatus && (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-3 py-2 rounded-md">
-                            {statusLoading ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : localAIStatus.healthy ? (
-                                <CheckCircle className="h-3 w-3 text-green-500" />
-                            ) : (
-                                <AlertCircle className="h-3 w-3 text-yellow-500" />
-                            )}
-                            <span>
-                                Active Backend: <strong className="text-foreground">{localAIStatus.stt_backend || 'Unknown'}</strong>
-                                {localAIStatus.stt_model && <span className="text-muted-foreground"> ({localAIStatus.stt_model})</span>}
-                            </span>
-                        </div>
-                    )}
-                    {sttProviders.length === 0 && (
-                        <p className="text-xs text-destructive">No STT providers available. Create a modular STT provider first.</p>
-                    )}
-                </div>
-
-                <div className="space-y-3">
-                    <FormSwitch
-                        id="pipeline-stt-streaming"
-                        label="Streaming STT"
-                        checked={localConfig.options?.stt?.streaming ?? true}
-                        onChange={(e) => updateSTTOptions({ streaming: e.target.checked })}
-                        description="Recommended. Enables low-latency, two-way conversation."
-                        tooltip="When enabled, supported STT adapters stream audio continuously. When disabled, STT runs in buffered chunk mode."
-                    />
-
-                    <div className="flex items-center justify-between">
-                        <button
-                            type="button"
-                            className="text-xs text-primary hover:underline"
-                            onClick={() => setShowAdvancedSTT((v) => !v)}
+                {localConfig.type !== 'tts_only' && (
+                    <div className="space-y-2">
+                        <FormLabel>Speech-to-Text (STT)</FormLabel>
+                        <select
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                            value={localConfig.stt || ''}
+                            onChange={(e) => handleProviderChange('stt', e.target.value)}
                         >
-                            {showAdvancedSTT ? 'Hide Advanced' : 'Show Advanced'}
-                        </button>
-                        <div className="text-xs text-muted-foreground">
-                            Defaults: chunk_ms=160, stream_format=pcm16_16k
-                        </div>
+                            <option value="">Select STT Provider...</option>
+                            {sttProviders.map(p => (
+                                <option key={p.value} value={p.value} disabled={p.disabled}>
+                                    {p.label} {p.disabled ? '(Disabled)' : ''}
+                                </option>
+                            ))}
+                        </select>
+                        {/* AAVA-116: Show active backend for local_stt */}
+                        {localConfig.stt?.includes('local') && localAIStatus && (
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-3 py-2 rounded-md">
+                                {statusLoading ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : localAIStatus.healthy ? (
+                                    <CheckCircle className="h-3 w-3 text-green-500" />
+                                ) : (
+                                    <AlertCircle className="h-3 w-3 text-yellow-500" />
+                                )}
+                                <span>
+                                    Active Backend: <strong className="text-foreground">{localAIStatus.stt_backend || 'Unknown'}</strong>
+                                    {localAIStatus.stt_model && <span className="text-muted-foreground"> ({localAIStatus.stt_model})</span>}
+                                </span>
+                            </div>
+                        )}
+                        {sttProviders.length === 0 && (
+                            <p className="text-xs text-destructive">No STT providers available. Create a modular STT provider first.</p>
+                        )}
                     </div>
+                )}
 
-                    {showAdvancedSTT && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <FormInput
-                                label="chunk_ms"
-                                type="number"
-                                value={localConfig.options?.stt?.chunk_ms ?? 160}
-                                onChange={(e) => updateSTTOptions({ chunk_ms: parseInt(e.target.value || '160', 10) })}
-                                tooltip="How often we flush accumulated audio frames to the STT streaming sender. 160ms is a good default."
-                            />
-                            <FormInput
-                                label="stream_format"
-                                value={localConfig.options?.stt?.stream_format ?? 'pcm16_16k'}
-                                onChange={(e) => updateSTTOptions({ stream_format: e.target.value })}
-                                tooltip="Input audio format for streaming STT. For Local STT this should usually be pcm16_16k."
-                            />
+                {localConfig.type !== 'tts_only' && (
+                    <div className="space-y-3">
+                        <FormSwitch
+                            id="pipeline-stt-streaming"
+                            label="Streaming STT"
+                            checked={localConfig.options?.stt?.streaming ?? true}
+                            onChange={(e) => updateSTTOptions({ streaming: e.target.checked })}
+                            description="Recommended. Enables low-latency, two-way conversation."
+                            tooltip="When enabled, supported STT adapters stream audio continuously. When disabled, STT runs in buffered chunk mode."
+                        />
+
+                        <div className="flex items-center justify-between">
+                            <button
+                                type="button"
+                                className="text-xs text-primary hover:underline"
+                                onClick={() => setShowAdvancedSTT((v) => !v)}
+                            >
+                                {showAdvancedSTT ? 'Hide Advanced' : 'Show Advanced'}
+                            </button>
+                            <div className="text-xs text-muted-foreground">
+                                Defaults: chunk_ms=160, stream_format=pcm16_16k
+                            </div>
                         </div>
-                    )}
-                </div>
 
-                <div className="space-y-2">
-                    <FormLabel>Large Language Model (LLM)</FormLabel>
-                    <select
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                        value={localConfig.llm || ''}
-                        onChange={(e) => handleProviderChange('llm', e.target.value)}
-                    >
-                        <option value="">Select LLM Provider...</option>
-                        {llmProviders.map(p => (
-                            <option key={p.value} value={p.value} disabled={p.disabled}>
-                                {p.label} {p.disabled ? '(Disabled)' : ''}
-                            </option>
-                        ))}
-                    </select>
-                    {llmProviders.length === 0 && (
-                        <p className="text-xs text-destructive">No LLM providers available. Create a modular LLM provider first.</p>
-                    )}
-                </div>
+                        {showAdvancedSTT && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <FormInput
+                                    label="chunk_ms"
+                                    type="number"
+                                    value={localConfig.options?.stt?.chunk_ms ?? 160}
+                                    onChange={(e) => updateSTTOptions({ chunk_ms: parseInt(e.target.value || '160', 10) })}
+                                    tooltip="How often we flush accumulated audio frames to the STT streaming sender. 160ms is a good default."
+                                />
+                                <FormInput
+                                    label="stream_format"
+                                    value={localConfig.options?.stt?.stream_format ?? 'pcm16_16k'}
+                                    onChange={(e) => updateSTTOptions({ stream_format: e.target.value })}
+                                    tooltip="Input audio format for streaming STT. For Local STT this should usually be pcm16_16k."
+                                />
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {localConfig.type !== 'tts_only' && (
+                    <div className="space-y-2">
+                        <FormLabel>Large Language Model (LLM)</FormLabel>
+                        <select
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                            value={localConfig.llm || ''}
+                            onChange={(e) => handleProviderChange('llm', e.target.value)}
+                        >
+                            <option value="">Select LLM Provider...</option>
+                            {llmProviders.map(p => (
+                                <option key={p.value} value={p.value} disabled={p.disabled}>
+                                    {p.label} {p.disabled ? '(Disabled)' : ''}
+                                </option>
+                            ))}
+                        </select>
+                        {llmProviders.length === 0 && (
+                            <p className="text-xs text-destructive">No LLM providers available. Create a modular LLM provider first.</p>
+                        )}
+                    </div>
+                )}
 
                 <div className="space-y-2">
                     <FormLabel>Text-to-Speech (TTS)</FormLabel>
@@ -393,7 +422,7 @@ const PipelineForm: React.FC<PipelineFormProps> = ({ config, providers, onChange
             </div>
 
             <div className="space-y-4 border-t border-border pt-6">
-                {(isOpenAILlm || isOllamaLlm) && (
+                {localConfig.type !== 'tts_only' && (isOpenAILlm || isOllamaLlm) && (
                     <div className="space-y-3 border border-amber-300/40 rounded-lg p-4 bg-amber-500/5">
                         <FormSwitch
                             label="LLM Expert Settings"

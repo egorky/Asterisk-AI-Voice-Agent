@@ -62,6 +62,10 @@ class ContextConfig:
     disable_global_in_call_tools: Optional[List[str]] = None  # Global in-call tools to disable
     disable_global_post_call_tools: Optional[List[str]] = None  # Global post-call tools to disable
 
+    # TTS-only broadcast support
+    tts_only_text: Optional[str] = None  # Template text with {var} placeholders for CSV custom_vars
+    auto_hangup_after_tts: bool = False  # Hang up call after TTS playback completes
+
 
 @dataclass
 class TransportProfile:
@@ -163,6 +167,9 @@ class TransportOrchestrator:
                         or context_dict.get('disable_global_in_call_http_tools')  # legacy Admin UI key
                     ),
                     disable_global_post_call_tools=context_dict.get('disable_global_post_call_tools'),
+                    # TTS-only broadcast fields
+                    tts_only_text=context_dict.get('tts_only_text'),
+                    auto_hangup_after_tts=bool(context_dict.get('auto_hangup_after_tts', False)),
                 )
                 logger.debug("Loaded context mapping", name=name, context=contexts[name])
             except Exception as exc:

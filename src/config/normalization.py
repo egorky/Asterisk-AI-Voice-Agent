@@ -105,6 +105,25 @@ def normalize_pipelines(config_data: Dict[str, Any]) -> None:
             continue
         
         if isinstance(raw_entry, dict):
+            pipeline_type = raw_entry.get("type", "standard")
+            
+            if pipeline_type == "tts_only":
+                # TTS-only pipelines: STT and LLM are explicitly set to "none"
+                normalized_entry = {
+                    "type": "tts_only",
+                    "stt": "none_stt",
+                    "llm": "none_llm",
+                    "tts": raw_entry.get("tts"),
+                    "tools": [],
+                    "options": raw_entry.get("options") or {},
+                }
+                if not normalized_entry["tts"]:
+                    raise TypeError(
+                        f"TTS-only pipeline '{pipeline_name}' requires a 'tts' component"
+                    )
+                normalized[pipeline_name] = normalized_entry
+                continue
+            
             provider_hint = raw_entry.get("provider")
             provider_for_defaults = provider_hint or default_provider
             components = _compose_provider_components(provider_for_defaults)
@@ -116,6 +135,7 @@ def normalize_pipelines(config_data: Dict[str, Any]) -> None:
                 )
             
             normalized_entry = {
+                "type": "standard",
                 "stt": raw_entry.get("stt", components["stt"]),
                 "llm": raw_entry.get("llm", components["llm"]),
                 "tts": raw_entry.get("tts", components["tts"]),
@@ -369,10 +389,26 @@ def validate_pipelines(config_data: Dict[str, Any]) -> None:
         if not isinstance(pipeline_cfg, dict):
             continue
         
+        # Skip validation for TTS-only pipelines (STT/LLM are intentionally "none")
+        pipeline_type = pipeline_cfg.get("type", "standard")
+        if pipeline_type == "tts_only":
+            # Only validate the TTS component
+            tts_component = pipeline_cfg.get("tts")
+            if tts_component and isinstance(tts_component, str) and not tts_component.endswith("_tts"):
+                errors.append(
+                    f"Pipeline '{pipeline_name}' TTS component '{tts_component}' "
+                    f"must end with '_tts'."
+                )
+            continue
+        
         # Check each component reference
         for role in ("stt", "llm", "tts"):
             component = pipeline_cfg.get(role)
             if not component or not isinstance(component, str):
+                continue
+            
+            # Skip validation for NoOp components (none_stt, none_llm)
+            if component.startswith("none_"):
                 continue
             
             # Component should end with _<role>

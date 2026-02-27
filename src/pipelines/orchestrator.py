@@ -64,6 +64,7 @@ class PipelineResolution:
     tts_options: Dict[str, Any]
     primary_provider: Optional[str] = None
     prepared: bool = False
+    is_tts_only: bool = False
 
     def component_summary(self) -> Dict[str, str]:
         return {
@@ -125,6 +126,38 @@ class PlaceholderLLMAdapter(LLMComponent, _PlaceholderBase):
         raise NotImplementedError(
             f"Placeholder LLM adapter '{self.component_key}' is not implemented yet."
         )
+
+
+class NoOpSTTAdapter(STTComponent, _PlaceholderBase):
+    """No-op STT adapter for TTS-only pipelines. Returns empty transcripts."""
+
+    def __init__(self, options: Optional[Dict[str, Any]] = None):
+        _PlaceholderBase.__init__(self, "none_stt", options)
+
+    async def transcribe(
+        self,
+        call_id: str,
+        audio_pcm16: bytes,
+        sample_rate_hz: int,
+        options: Dict[str, Any],
+    ) -> str:
+        return ""
+
+
+class NoOpLLMAdapter(LLMComponent, _PlaceholderBase):
+    """No-op LLM adapter for TTS-only pipelines. Returns empty response."""
+
+    def __init__(self, options: Optional[Dict[str, Any]] = None):
+        _PlaceholderBase.__init__(self, "none_llm", options)
+
+    async def generate(
+        self,
+        call_id: str,
+        transcript: str,
+        context: Dict[str, Any],
+        options: Dict[str, Any],
+    ) -> str:
+        return ""
 
 
 class PlaceholderTTSAdapter(TTSComponent, _PlaceholderBase):
@@ -461,6 +494,11 @@ class PipelineOrchestrator:
         return None
 
     def _register_builtin_factories(self) -> None:
+        # NoOp adapters for TTS-only pipelines (always available)
+        self.register_factory("none_stt", lambda opts: NoOpSTTAdapter(opts))
+        self.register_factory("none_llm", lambda opts: NoOpLLMAdapter(opts))
+        logger.debug("NoOp pipeline adapters registered (none_stt, none_llm)")
+
         if self._local_provider_config:
             stt_factory = self._make_local_stt_factory(self._local_provider_config)
             llm_factory = self._make_local_llm_factory(self._local_provider_config)
@@ -1439,6 +1477,7 @@ class PipelineOrchestrator:
             tts_adapter=tts_adapter,
             tts_options=tts_options,
             primary_provider=primary_provider,
+            is_tts_only=getattr(entry, 'is_tts_only', False),
         )
 
     async def _shutdown_component(self, component: Component, call_id: str) -> None:

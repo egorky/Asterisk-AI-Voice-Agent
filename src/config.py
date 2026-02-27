@@ -558,11 +558,16 @@ class HealthConfig(BaseModel):
 
 
 class PipelineEntry(BaseModel):
-    stt: str
-    llm: str
+    type: str = Field(default="standard")  # "standard" | "tts_only"
+    stt: str = Field(default="none")
+    llm: str = Field(default="none")
     tts: str
     tools: List[str] = Field(default_factory=list)
     options: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+    @property
+    def is_tts_only(self) -> bool:
+        return self.type == "tts_only"
 
 
 # Milestone7: Compose canonical component names for provider-backed pipelines.

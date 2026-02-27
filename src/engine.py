@@ -3483,6 +3483,68 @@ class Engine:
             )
             return text
 
+    def _render_tts_only_template(self, template: str, session: "CallSession") -> str:
+        """Render a TTS-only broadcast template with custom_vars from CSV.
+        
+        Merges built-in variables (caller_name, call_id, etc.) with
+        outbound_custom_vars from the CSV lead data. Custom vars take
+        priority for overlapping keys.
+        
+        Placeholders use {variable_name} syntax. Unknown placeholders
+        are replaced with empty string for clean audio output.
+        """
+        if not template:
+            return ""
+        
+        import re
+        
+        # Start with built-in substitutions
+        substitutions = {
+            "caller_name": getattr(session, 'caller_name', None) or "",
+            "caller_number": getattr(session, 'caller_number', None) or "",
+            "call_id": session.call_id,
+            "context_name": getattr(session, 'context_name', None) or "",
+            "campaign_id": getattr(session, 'outbound_campaign_id', None) or "",
+            "lead_id": getattr(session, 'outbound_lead_id', None) or "",
+        }
+        
+        # Merge custom_vars from CSV (these take priority)
+        custom_vars = getattr(session, 'outbound_custom_vars', None) or {}
+        for k, v in custom_vars.items():
+            substitutions[str(k)] = str(v) if v is not None else ""
+        
+        # Add pre-call tool results if available
+        pre_call_results = getattr(session, 'pre_call_results', None) or {}
+        for key, value in pre_call_results.items():
+            if key not in substitutions:
+                substitutions[key] = str(value) if value else ""
+        
+        def replace_match(match):
+            key = match.group(1)
+            if key in substitutions:
+                return substitutions[key]
+            # Convert dot notation to underscore
+            underscore_key = key.replace('.', '_')
+            if underscore_key in substitutions:
+                return substitutions[underscore_key]
+            # For broadcast templates, replace unknown vars with empty string
+            logger.debug(
+                "TTS-only template: unknown variable, replacing with empty",
+                call_id=session.call_id,
+                variable=key,
+            )
+            return ""
+        
+        try:
+            return re.sub(r'\{([\w.]+)\}', replace_match, template)
+        except Exception as e:
+            logger.error(
+                "TTS-only template rendering failed",
+                call_id=session.call_id,
+                error=str(e),
+            )
+            return template
+
     async def _wait_for_attended_transfer_dtmf(
         self,
         agent_channel_id: str,
@@ -9125,6 +9187,102 @@ class Engine:
                             exc_info=True,
                         )
                         break
+
+            # ──────────────────────────────────────────────────────────────────
+            # TTS-ONLY BROADCAST PIPELINE: synthesize template → play → hangup
+            # ──────────────────────────────────────────────────────────────────
+            if getattr(pipeline, 'is_tts_only', False):
+                tts_only_text = ""
+                try:
+                    context_name = getattr(session, "context_name", None)
+                    context_config = self.transport_orchestrator.get_context_config(context_name) if context_name else None
+                    tts_only_text = (getattr(context_config, "tts_only_text", None) or "").strip() if context_config else ""
+                except Exception:
+                    logger.debug("TTS-only: failed to read context config", call_id=call_id, exc_info=True)
+
+                if not tts_only_text:
+                    logger.warning(
+                        "TTS-only pipeline has no tts_only_text in context; skipping playback",
+                        call_id=call_id,
+                        context=getattr(session, "context_name", None),
+                    )
+                else:
+                    # Render template with custom_vars from CSV lead
+                    rendered_text = self._render_tts_only_template(tts_only_text, session)
+                    logger.info(
+                        "TTS-only broadcast: rendering template",
+                        call_id=call_id,
+                        template_length=len(tts_only_text),
+                        rendered_length=len(rendered_text),
+                    )
+
+                    # Persist the rendered message to conversation history
+                    try:
+                        session.conversation_history.append({"role": "assistant", "content": rendered_text})
+                        await self.session_store.upsert_call(session)
+                    except Exception:
+                        logger.debug("TTS-only: failed to persist message to history", call_id=call_id, exc_info=True)
+
+                    # Synthesize and play
+                    try:
+                        use_streaming_playback = self.config.downstream_mode != "file"
+                        tts_format = (pipeline.tts_options or {}).get("format")
+                        if not isinstance(tts_format, dict):
+                            tts_format = (pipeline.tts_options or {}).get("target_format")
+                        if not isinstance(tts_format, dict):
+                            tts_format = {}
+                        tts_encoding = str(tts_format.get("encoding") or tts_format.get("format") or "mulaw")
+                        try:
+                            tts_rate = int(tts_format.get("sample_rate") or tts_format.get("sample_rate_hz") or 8000)
+                        except Exception:
+                            tts_rate = 8000
+
+                        if use_streaming_playback:
+                            q: asyncio.Queue = asyncio.Queue(maxsize=256)
+                            stream_id = await self.streaming_playback_manager.start_streaming_playback(
+                                call_id,
+                                q,
+                                playback_type="tts-only-broadcast",
+                                source_encoding=tts_encoding,
+                                source_sample_rate=tts_rate,
+                            )
+                            if stream_id:
+                                async for chunk in pipeline.tts_adapter.synthesize(call_id, rendered_text, pipeline.tts_options):
+                                    if chunk:
+                                        await q.put(chunk)
+                                try:
+                                    q.put_nowait(None)
+                                except asyncio.QueueFull:
+                                    asyncio.create_task(q.put(None))
+                                # Wait for streaming playback to finish
+                                await asyncio.sleep(len(rendered_text) * 0.08 + 1.0)
+                            else:
+                                logger.error("TTS-only: streaming playback failed to start", call_id=call_id)
+                        else:
+                            tts_bytes = bytearray()
+                            async for chunk in pipeline.tts_adapter.synthesize(call_id, rendered_text, pipeline.tts_options):
+                                if chunk:
+                                    tts_bytes.extend(chunk)
+                            if tts_bytes:
+                                pid = await self.playback_manager.play_audio(call_id, bytes(tts_bytes), "tts-only-broadcast")
+                                if pid:
+                                    duration_sec = len(tts_bytes) / 8000.0
+                                    await self.playback_manager.wait_for_playback_end(
+                                        call_id,
+                                        pid,
+                                        timeout_sec=(duration_sec + 3.0),
+                                    )
+                    except Exception:
+                        logger.error("TTS-only broadcast playback failed", call_id=call_id, exc_info=True)
+
+                # Auto-hangup after TTS playback
+                logger.info("TTS-only broadcast: hanging up after playback", call_id=call_id)
+                try:
+                    channel_id = getattr(session, "caller_channel_id", None) or call_id
+                    await self.ari_client.hangup_channel(channel_id)
+                except Exception as e:
+                    logger.error("TTS-only broadcast: ARI hangup failed", call_id=call_id, error=str(e))
+                return  # Skip STT/LLM processing entirely
 
             # Accumulate into ~160ms chunks for STT while keeping ingestion responsive
             bytes_per_ms = 32  # 16k Hz * 2 bytes / 1000 ms

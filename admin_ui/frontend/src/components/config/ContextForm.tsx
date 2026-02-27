@@ -61,9 +61,9 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
     };
 
     const isGlobalToolDisabled = (phase: 'pre_call' | 'post_call' | 'in_call', toolName: string) => {
-        const key = phase === 'pre_call' ? 'disable_global_pre_call_tools' 
+        const key = phase === 'pre_call' ? 'disable_global_pre_call_tools'
             : phase === 'post_call' ? 'disable_global_post_call_tools'
-            : 'disable_global_in_call_tools';
+                : 'disable_global_in_call_tools';
         return (config[key] || []).includes(toolName);
     };
 
@@ -200,10 +200,59 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
                 />
             </div>
 
+            {/* TTS-Only Broadcast Settings - shown when a tts_only pipeline is selected */}
+            {(() => {
+                const selectedPipelineName = config.pipeline || '';
+                const selectedPipelineConfig = pipelines?.[selectedPipelineName];
+                const isTtsOnlyPipeline = selectedPipelineConfig?.type === 'tts_only';
+
+                if (!isTtsOnlyPipeline) return null;
+
+                return (
+                    <div className="space-y-4 p-4 rounded-lg border border-purple-500/30 bg-purple-500/5">
+                        <div className="flex items-center gap-2 mb-2">
+                            <span className="text-sm font-semibold text-purple-400">📢 TTS Broadcast Settings</span>
+                        </div>
+
+                        <div className="space-y-2">
+                            <FormLabel tooltip="Template text that will be spoken via TTS. Use {variable_name} placeholders for personalization with CSV custom variables.">
+                                TTS Message Template
+                            </FormLabel>
+                            <textarea
+                                className="w-full p-3 rounded-md border border-input bg-transparent text-sm min-h-[120px] focus:outline-none focus:ring-1 focus:ring-ring"
+                                value={config.tts_only_text || ''}
+                                onChange={(e) => updateConfig('tts_only_text', e.target.value)}
+                                placeholder="Hello {name}, this is a reminder about your appointment on {date} at {time}. Please call us at {phone} if you need to reschedule."
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Use <code className="bg-muted px-1 rounded">{'{variable_name}'}</code> for CSV custom variables.
+                                Built-in: <code className="bg-muted px-1 rounded">{'{caller_name}'}</code>, <code className="bg-muted px-1 rounded">{'{caller_number}'}</code>, <code className="bg-muted px-1 rounded">{'{campaign_id}'}</code>
+                            </p>
+                        </div>
+
+                        <div className="flex items-center justify-between p-3 rounded-md border border-border bg-card/30">
+                            <div>
+                                <p className="text-sm font-medium">Auto Hang-Up After TTS</p>
+                                <p className="text-xs text-muted-foreground">Automatically disconnect the call after the message finishes playing.</p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    className="sr-only peer"
+                                    checked={config.auto_hangup_after_tts !== false}
+                                    onChange={(e) => updateConfig('auto_hangup_after_tts', e.target.checked)}
+                                />
+                                <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                            </label>
+                        </div>
+                    </div>
+                );
+            })()}
+
             {/* Phase-Based Tool Configuration */}
             <div className="space-y-3">
                 <FormLabel>Tools by Phase</FormLabel>
-                
+
                 {/* Pre-Call Tools */}
                 <div className="border border-border rounded-lg overflow-hidden">
                     <button
@@ -225,11 +274,10 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
                             ) : (
                                 <div className="grid grid-cols-2 gap-2">
                                     {getHttpToolsByPhase('pre_call').map(tool => (
-                                        <label 
-                                            key={tool.name} 
-                                            className={`flex items-center justify-between p-2 rounded border border-border bg-card/30 ${
-                                                tool.is_global && isGlobalToolDisabled('pre_call', tool.name) ? 'opacity-50' : 'hover:bg-accent'
-                                            } cursor-pointer`}
+                                        <label
+                                            key={tool.name}
+                                            className={`flex items-center justify-between p-2 rounded border border-border bg-card/30 ${tool.is_global && isGlobalToolDisabled('pre_call', tool.name) ? 'opacity-50' : 'hover:bg-accent'
+                                                } cursor-pointer`}
                                         >
                                             <div className="flex items-center space-x-2">
                                                 {!tool.is_global && (
@@ -253,11 +301,10 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
                                                         e.preventDefault();
                                                         handleGlobalToolDisable('disable_global_pre_call_tools', tool.name);
                                                     }}
-                                                    className={`text-xs px-2 py-0.5 rounded ${
-                                                        isGlobalToolDisabled('pre_call', tool.name)
+                                                    className={`text-xs px-2 py-0.5 rounded ${isGlobalToolDisabled('pre_call', tool.name)
                                                             ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
                                                             : 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                                                    }`}
+                                                        }`}
                                                     title={isGlobalToolDisabled('pre_call', tool.name) ? 'Click to enable for this context' : 'Click to disable for this context'}
                                                 >
                                                     {isGlobalToolDisabled('pre_call', tool.name) ? 'Disabled' : 'Enabled'}
@@ -313,11 +360,10 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
                                 ))}
                                 {/* HTTP tools with phase=in_call */}
                                 {getHttpToolsByPhase('in_call').map(tool => (
-                                    <label 
-                                        key={`http-${tool.name}`} 
-                                        className={`flex items-center justify-between p-2 rounded border border-border bg-card/30 ${
-                                            tool.is_global && isGlobalToolDisabled('in_call', tool.name) ? 'opacity-50' : 'hover:bg-accent'
-                                        } cursor-pointer`}
+                                    <label
+                                        key={`http-${tool.name}`}
+                                        className={`flex items-center justify-between p-2 rounded border border-border bg-card/30 ${tool.is_global && isGlobalToolDisabled('in_call', tool.name) ? 'opacity-50' : 'hover:bg-accent'
+                                            } cursor-pointer`}
                                     >
                                         <div className="flex items-center space-x-2">
                                             {!tool.is_global && (
@@ -341,11 +387,10 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
                                                     e.preventDefault();
                                                     handleGlobalToolDisable('disable_global_in_call_tools', tool.name);
                                                 }}
-                                                className={`text-xs px-2 py-0.5 rounded ${
-                                                    isGlobalToolDisabled('in_call', tool.name)
+                                                className={`text-xs px-2 py-0.5 rounded ${isGlobalToolDisabled('in_call', tool.name)
                                                         ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
                                                         : 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                                                }`}
+                                                    }`}
                                                 title={isGlobalToolDisabled('in_call', tool.name) ? 'Click to enable for this context' : 'Click to disable for this context'}
                                             >
                                                 {isGlobalToolDisabled('in_call', tool.name) ? 'Disabled' : 'Enabled'}
@@ -379,11 +424,10 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
                             ) : (
                                 <div className="grid grid-cols-2 gap-2">
                                     {getHttpToolsByPhase('post_call').map(tool => (
-                                        <label 
-                                            key={tool.name} 
-                                            className={`flex items-center justify-between p-2 rounded border border-border bg-card/30 ${
-                                                tool.is_global && isGlobalToolDisabled('post_call', tool.name) ? 'opacity-50' : 'hover:bg-accent'
-                                            } cursor-pointer`}
+                                        <label
+                                            key={tool.name}
+                                            className={`flex items-center justify-between p-2 rounded border border-border bg-card/30 ${tool.is_global && isGlobalToolDisabled('post_call', tool.name) ? 'opacity-50' : 'hover:bg-accent'
+                                                } cursor-pointer`}
                                         >
                                             <div className="flex items-center space-x-2">
                                                 {!tool.is_global && (
@@ -407,11 +451,10 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
                                                         e.preventDefault();
                                                         handleGlobalToolDisable('disable_global_post_call_tools', tool.name);
                                                     }}
-                                                    className={`text-xs px-2 py-0.5 rounded ${
-                                                        isGlobalToolDisabled('post_call', tool.name)
+                                                    className={`text-xs px-2 py-0.5 rounded ${isGlobalToolDisabled('post_call', tool.name)
                                                             ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
                                                             : 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                                                    }`}
+                                                        }`}
                                                     title={isGlobalToolDisabled('post_call', tool.name) ? 'Click to enable for this context' : 'Click to disable for this context'}
                                                 >
                                                     {isGlobalToolDisabled('post_call', tool.name) ? 'Disabled' : 'Enabled'}
