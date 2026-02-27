@@ -495,8 +495,8 @@ class PipelineOrchestrator:
 
     def _register_builtin_factories(self) -> None:
         # NoOp adapters for TTS-only pipelines (always available)
-        self.register_factory("none_stt", lambda opts: NoOpSTTAdapter(opts))
-        self.register_factory("none_llm", lambda opts: NoOpLLMAdapter(opts))
+        self.register_factory("none_stt", lambda key, opts: NoOpSTTAdapter(opts))
+        self.register_factory("none_llm", lambda key, opts: NoOpLLMAdapter(opts))
         logger.debug("NoOp pipeline adapters registered (none_stt, none_llm)")
 
         if self._local_provider_config:
