@@ -261,3 +261,17 @@ class TestPipelineResolutionTtsOnly:
             is_tts_only=True,
         )
         assert resolution.is_tts_only is True
+class TestCallSessionTtsOnly:
+    """Tests for CallSession model with is_tts_only flag."""
+
+    def test_call_session_is_tts_only_default(self):
+        """CallSession.is_tts_only should default to False."""
+        from src.core.models import CallSession
+        session = CallSession(call_id="test", caller_channel_id="test")
+        assert session.is_tts_only is False
+
+    def test_call_session_is_tts_only_true(self):
+        """CallSession.is_tts_only can be set to True."""
+        from src.core.models import CallSession
+        session = CallSession(call_id="test", caller_channel_id="test", is_tts_only=True)
+        assert session.is_tts_only is True

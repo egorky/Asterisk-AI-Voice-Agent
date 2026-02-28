@@ -164,6 +164,7 @@ class CallSession:
 
     # Outbound campaign dialer (Milestone 22)
     is_outbound: bool = False
+    is_tts_only: bool = False
     outbound_campaign_id: Optional[str] = None
     outbound_lead_id: Optional[str] = None
     outbound_attempt_id: Optional[str] = None

@@ -5444,14 +5444,12 @@ class Engine:
                     cfg = getattr(self.config, "barge_in", None)
                     if not cfg or not getattr(cfg, "enabled", True):
                         return
+                    # TTS-only pipelines skip barge-in — the user's voice should not interrupt playback.
+                    if getattr(session, "is_tts_only", False):
+                        return
+
                     # If TALK_DETECT is enabled for this pipeline, prefer it over local energy checks
                     # to avoid double-triggering and false positives on AudioSocket.
-                    try:
-                        td = (session.vad_state or {}).get("pipeline_talk_detect", {}) or {}
-                        if bool(td.get("enabled", False)):
-                            return
-                    except Exception:
-                        pass
                     now = time.time()
                     tts_elapsed_ms = 0
                     try:
@@ -6725,6 +6723,15 @@ class Engine:
             if not session:
                 return
 
+            if getattr(session, "is_tts_only", False):
+                logger.debug(
+                    "Barge-in ignored (TTS-only session)",
+                    call_id=call_id,
+                    source=source,
+                    reason=reason,
+                )
+                return
+
             if not bool(getattr(session, "media_rx_confirmed", False)):
                 logger.debug(
                     "Barge-in ignored (media not confirmed)",
@@ -6940,13 +6947,11 @@ class Engine:
                     cfg = getattr(self.config, "barge_in", None)
                     if not cfg or not getattr(cfg, "enabled", True):
                         return
+                    # TTS-only pipelines skip barge-in — the user's voice should not interrupt playback.
+                    if getattr(session, "is_tts_only", False):
+                        return
+
                     # If TALK_DETECT is enabled for this pipeline, prefer it over local energy checks.
-                    try:
-                        td = (session.vad_state or {}).get("pipeline_talk_detect", {}) or {}
-                        if bool(td.get("enabled", False)):
-                            return
-                    except Exception:
-                        pass
                     now = time.time()
                     tts_elapsed_ms = 0
                     try:
@@ -8873,10 +8878,7 @@ class Engine:
         # Pipelines: enable Asterisk talk detection so barge-in can trigger even when
         # ExternalMedia RTP delivery is paused/altered during channel playback.
         # TTS-only pipelines skip barge-in — the user's voice should not interrupt playback.
-        _pipeline_name = getattr(session, 'pipeline_name', None)
-        _pipeline_entry = (self.config.pipelines or {}).get(_pipeline_name) if _pipeline_name else None
-        is_tts_only_pipeline = getattr(_pipeline_entry, 'is_tts_only', False) if _pipeline_entry else False
-        if not is_tts_only_pipeline:
+        if not getattr(session, "is_tts_only", False):
             try:
                 await self._enable_pipeline_talk_detect(session)
             except Exception:
@@ -11486,6 +11488,10 @@ class Engine:
  
         if session.pipeline_components != component_summary:
             session.pipeline_components = component_summary
+            updated = True
+
+        if getattr(session, "is_tts_only", False) != resolution.is_tts_only:
+            session.is_tts_only = resolution.is_tts_only
             updated = True
  
         provider_override = resolution.primary_provider
