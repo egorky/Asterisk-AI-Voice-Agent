@@ -3148,6 +3148,26 @@ class StreamingPlaybackManager:
                         stream_id=stream_id,
                         error=str(e))
 
+    async def wait_for_stream_completion(self, call_id: str, timeout_sec: float = 60.0) -> bool:
+        """Wait for the streaming task (and pacer) to finish playing all queued audio."""
+        stream_info = self.active_streams.get(call_id)
+        if not stream_info:
+            return True
+            
+        streaming_task = stream_info.get('streaming_task')
+        if not streaming_task or streaming_task.done():
+            return True
+            
+        try:
+            # Shield to prevent test/caller cancellation from killing the vital stream loops
+            await asyncio.wait_for(asyncio.shield(streaming_task), timeout=timeout_sec)
+            return True
+        except asyncio.TimeoutError:
+            logger.warning("Timeout waiting for stream completion", call_id=call_id)
+            return False
+        except Exception as e:
+            logger.error("Error waiting for stream completion", call_id=call_id, error=str(e))
+            return False
     
     async def stop_streaming_playback(self, call_id: str) -> bool:
         """Stop streaming playback for a call."""

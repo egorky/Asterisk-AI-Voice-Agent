@@ -9276,8 +9276,12 @@ class Engine:
                                     q.put_nowait(None)
                                 except asyncio.QueueFull:
                                     asyncio.create_task(q.put(None))
-                                # Wait for streaming playback to finish
-                                await asyncio.sleep(len(rendered_text) * 0.08 + 1.0)
+                                
+                                # Wait for streaming playback to actually finish draining queues
+                                await self.streaming_playback_manager.wait_for_stream_completion(
+                                    call_id,
+                                    timeout_sec=(len(rendered_text) * 0.15 + 10.0)
+                                )
                             else:
                                 logger.error("TTS-only: streaming playback failed to start", call_id=call_id)
                         else:
