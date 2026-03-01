@@ -411,6 +411,13 @@ class AzureTTSProviderConfig(BaseModel):
     # e.g. "es-MX" when using a Chinese multilingual voice to speak Spanish.
     # When set, SSML becomes: <voice><lang xml:lang="lang_tag">text</lang></voice>
     lang_tag: Optional[str] = Field(default=None)
+    # Override for global downstream_mode setting (how audio is played toward Asterisk).
+    # "auto"   → use the global downstream_mode (default, preserves existing behaviour)
+    # "stream" → force streaming playback via StreamingPlaybackManager, regardless of global mode
+    # "file"   → force file-based playback, regardless of global mode
+    # Useful when you want Azure TTS streaming (chunked HTTP) but file-based Asterisk playback,
+    # or when you want streaming Asterisk playback even if downstream_mode=file globally.
+    downstream_mode_override: str = Field(default="auto")
     # Azure output audio format header value (X-Microsoft-OutputFormat).
     # PCM-based formats (riff-*) are decoded natively; raw-8khz-mulaw is used directly.
     # See: https://learn.microsoft.com/azure/ai-services/speech-service/rest-text-to-speech

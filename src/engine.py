@@ -9043,7 +9043,15 @@ class Engine:
                 max_attempts = 2
                 for attempt in range(1, max_attempts + 1):
                     try:
-                        use_streaming_playback = self.config.downstream_mode != "file"
+                        # Resolve effective downstream mode: TTS adapter can override global setting.
+                        # getattr fallback keeps this generic — works for any adapter, not just Azure.
+                        _tts_dm_override = getattr(pipeline.tts_adapter, "downstream_mode_override", "auto") or "auto"
+                        if _tts_dm_override == "stream":
+                            use_streaming_playback = True
+                        elif _tts_dm_override == "file":
+                            use_streaming_playback = False
+                        else:
+                            use_streaming_playback = self.config.downstream_mode != "file"
                         tts_format = (pipeline.tts_options or {}).get("format")
                         if not isinstance(tts_format, dict):
                             tts_format = (pipeline.tts_options or {}).get("target_format")
@@ -9560,7 +9568,14 @@ class Engine:
                     
                     # 1. Synthesize and Play Text (if any)
                     if response_text:
-                        use_streaming_playback = self.config.downstream_mode != "file"
+                        # Resolve effective downstream mode: TTS adapter can override global setting.
+                        _tts_dm_override = getattr(pipeline.tts_adapter, "downstream_mode_override", "auto") or "auto"
+                        if _tts_dm_override == "stream":
+                            use_streaming_playback = True
+                        elif _tts_dm_override == "file":
+                            use_streaming_playback = False
+                        else:
+                            use_streaming_playback = self.config.downstream_mode != "file"
                         if use_streaming_playback:
                             stream_q: asyncio.Queue = asyncio.Queue(maxsize=256)
                             stream_id: Optional[str] = None

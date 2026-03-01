@@ -606,6 +606,13 @@ class AzureTTSAdapter(TTSComponent):
         self._session_factory = session_factory
         self._session: Optional[aiohttp.ClientSession] = None
         self._chunk_size_ms = int(self._pipeline_defaults.get("chunk_size_ms", provider_config.chunk_size_ms))
+        # Public attribute: engine pipeline runner checks this to decide playback strategy.
+        # Values: "auto" (use global downstream_mode), "stream", "file".
+        self.downstream_mode_override: str = str(
+            self._pipeline_defaults.get("downstream_mode_override")
+            or getattr(provider_config, "downstream_mode_override", "auto")
+            or "auto"
+        )
 
     async def start(self) -> None:
         logger.debug(
