@@ -260,6 +260,11 @@ class AzureSTTFastAdapter(STTComponent):
 
     async def validate_connectivity(self, options: Dict[str, Any]) -> Dict[str, Any]:
         merged = self._compose_options(options or {})
+        # Inject the computed Azure URL so the base-class URL check passes.
+        # The base class only does a lightweight URL-format check for non-primary providers.
+        if not merged.get("base_url"):
+            region = merged.get("region") or self._provider_defaults.region
+            merged["base_url"] = merged.get("fast_stt_base_url") or _build_azure_stt_fast_url(region)
         return await super().validate_connectivity(merged)
 
     async def transcribe(
@@ -434,6 +439,11 @@ class AzureSTTRealtimeAdapter(STTComponent):
 
     async def validate_connectivity(self, options: Dict[str, Any]) -> Dict[str, Any]:
         merged = self._compose_options(options or {})
+        # Inject the computed Azure URL so the base-class URL check passes.
+        if not merged.get("base_url"):
+            region = merged.get("region") or self._provider_defaults.region
+            language = merged.get("language") or self._provider_defaults.language
+            merged["base_url"] = merged.get("realtime_stt_base_url") or _build_azure_stt_realtime_url(region, language)
         return await super().validate_connectivity(merged)
 
     async def transcribe(
@@ -598,6 +608,10 @@ class AzureTTSAdapter(TTSComponent):
 
     async def validate_connectivity(self, options: Dict[str, Any]) -> Dict[str, Any]:
         merged = self._compose_options(options or {})
+        # Inject the computed Azure URL so the base-class URL check passes.
+        if not merged.get("base_url"):
+            region = merged.get("region") or self._provider_defaults.region
+            merged["base_url"] = merged.get("tts_base_url") or _build_azure_tts_url(region)
         return await super().validate_connectivity(merged)
 
     async def synthesize(
