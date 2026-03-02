@@ -637,8 +637,9 @@ class AzureSTTRealtimeAdapter(STTComponent):
             
         push_stream = session["push_stream"]
         # Azure PushStream takes raw bytes directly
+        # CRITICAL FIX: Wrap in to_thread to avoid blocking event loop (Milestone 7)
         try:
-            push_stream.write(audio_bytes)
+            await asyncio.to_thread(push_stream.write, audio_bytes)
         except Exception as exc:
             logger.error("Azure SDK stream write failed", call_id=call_id, exc_info=exc)
 

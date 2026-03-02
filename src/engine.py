@@ -488,6 +488,7 @@ class Engine:
         # Pipeline runtime structures (Milestone 7): per-call audio queues and runner tasks
         self._pipeline_queues: Dict[str, asyncio.Queue] = {}
         self._pipeline_tasks: Dict[str, asyncio.Task] = {}
+        self._pipeline_aborted: Dict[str, bool] = {}  # Per-call barge-in state for pipelines (Milestone 7)
         # Per-call background tasks (fire-and-forget) that should be cancelled on cleanup
         self._call_bg_tasks: Dict[str, Set[asyncio.Task]] = {}
         # Track calls where a pipeline was explicitly requested via AI_PROVIDER
@@ -4601,6 +4602,7 @@ class Engine:
                 except Exception:
                     logger.debug("Pipeline talk detect disable failed", call_id=call_id, exc_info=True)
                 self._pipeline_forced.pop(call_id, None)
+                self._pipeline_aborted.pop(call_id, None)
             except Exception:
                 logger.debug("Pipeline cleanup failed", call_id=call_id, exc_info=True)
 
@@ -6668,6 +6670,9 @@ class Engine:
             session = await self.session_store.get_by_call_id(call_id)
             if not session:
                 return
+
+            # Signal pipeline interruption (Milestone 7)
+            self._pipeline_aborted[call_id] = True
 
             if not bool(getattr(session, "media_rx_confirmed", False)):
                 logger.debug(
@@ -9240,13 +9245,19 @@ class Engine:
             async def ingest_audio() -> None:
                 try:
                     while True:
-                        chunk = await inbound_queue.get()
-                        if chunk is None:
-                            await enqueue_buffer(None)
-                            break
-                        await enqueue_buffer(chunk)
+                        try:
+                            chunk = await inbound_queue.get()
+                            if chunk is None:
+                                await enqueue_buffer(None)
+                                break
+                            await enqueue_buffer(chunk)
+                        except Exception as e:
+                            logger.error("Error in ingest_audio", call_id=call_id, error=str(e), exc_info=True)
+                            await asyncio.sleep(0.01)
                 except asyncio.CancelledError:
                     pass
+                except Exception as e:
+                    logger.error("Fatal error in ingest_audio", call_id=call_id, error=str(e), exc_info=True)
 
             if not use_streaming:
 
@@ -9308,42 +9319,53 @@ class Engine:
                     local_buf = bytearray()
                     try:
                         while True:
-                            frame = await buffer_queue.get()
-                            if frame is None:
-                                if local_buf:
-                                    try:
-                                        await pipeline.stt_adapter.send_audio(
-                                            call_id,
-                                            bytes(local_buf),
-                                            fmt=stream_format,
-                                        )
-                                    except Exception:
-                                        logger.debug(
-                                            "Streaming STT final send failed",
-                                            call_id=call_id,
-                                            exc_info=True,
-                                        )
-                                    local_buf.clear()
-                                break
-                            local_buf.extend(frame)
-                            if len(local_buf) < commit_bytes:
-                                continue
-                            chunk = bytes(local_buf)
-                            local_buf.clear()
                             try:
-                                await pipeline.stt_adapter.send_audio(
-                                    call_id,
-                                    chunk,
-                                    fmt=stream_format,
-                                )
-                            except Exception:
-                                logger.debug(
-                                    "Streaming STT send failed",
-                                    call_id=call_id,
-                                    exc_info=True,
-                                )
+                                frame = await buffer_queue.get()
+                                if frame is None:
+                                    if local_buf:
+                                        try:
+                                            await pipeline.stt_adapter.send_audio(
+                                                call_id,
+                                                bytes(local_buf),
+                                                fmt=stream_format,
+                                            )
+                                        except Exception as e:
+                                            logger.debug(
+                                                "Streaming STT final send failed",
+                                                call_id=call_id,
+                                                error=str(e),
+                                                exc_info=True,
+                                            )
+                                        local_buf.clear()
+                                    break
+                                
+                                local_buf.extend(frame)
+                                if len(local_buf) < commit_bytes:
+                                    continue
+                                
+                                chunk = bytes(local_buf)
+                                local_buf.clear()
+                                
+                                try:
+                                    await pipeline.stt_adapter.send_audio(
+                                        call_id,
+                                        chunk,
+                                        fmt=stream_format,
+                                    )
+                                except Exception as e:
+                                    logger.debug(
+                                        "Streaming STT send failed",
+                                        call_id=call_id,
+                                        error=str(e),
+                                        exc_info=True,
+                                    )
+                            except Exception as e:
+                                logger.error("Error in stt_sender loop", call_id=call_id, error=str(e), exc_info=True)
+                                await asyncio.sleep(0.01)
                     except asyncio.CancelledError:
                         pass
+                    except Exception as e:
+                        logger.error("Fatal error in stt_sender", call_id=call_id, error=str(e), exc_info=True)
 
                 async def stt_receiver() -> None:
                     try:
@@ -9375,9 +9397,10 @@ class Engine:
             async def dialog_worker() -> None:
                 pending_segments: List[str] = []
                 flush_task: Optional[asyncio.Task] = None
-                accumulation_timeout = float(
-                    (pipeline.llm_options or {}).get("aggregation_timeout_sec", 2.0)
-                )
+                aggregation_cfg = (pipeline.llm_options or {}).get("aggregation_timeout_sec")
+                if aggregation_cfg is None:
+                    aggregation_cfg = (pipeline.llm_options or {}).get("aggregation_timeout", 1.0)
+                accumulation_timeout = float(aggregation_cfg)
                 # Track conversation history to include prior messages
                 # AAVA-85 FIX: Initialize from session to preserve greeting
                 conversation_history: List[Dict[str, str]] = list(session.conversation_history or [])
@@ -9617,6 +9640,11 @@ class Engine:
                                 async for tts_chunk in pipeline.tts_adapter.synthesize(call_id, response_text, pipeline.tts_options):
                                     if not tts_chunk:
                                         continue
+                                    
+                                    # Check for barge-in interruption (Milestone 7)
+                                    if self._pipeline_aborted.get(call_id):
+                                        aborted = True
+
                                     if first_tts_ts is None:
                                         first_tts_ts = time.time()
                                         turn_latency_ms = (first_tts_ts - turn_start_time) * 1000
@@ -9626,8 +9654,14 @@ class Engine:
                                                 _TURN_STT_TO_TTS.labels(pipeline_label, provider_label).observe(max(0.0, first_tts_ts - t_start))
                                         except Exception:
                                             pass
-                                    await stream_q.put(tts_chunk)
+                                    
+                                    if not aborted:
+                                        await stream_q.put(tts_chunk)
+                                    
                                     if aborted:
+                                        logger.info("🎬 Pipeline TTS synthesis interrupted by barge-in", call_id=call_id)
+                                        # Reset aborted flag for the next turn
+                                        self._pipeline_aborted[call_id] = False
                                         # Clear pending accumulation and the transcript queue
                                         # so the LLM doesn't process stale text from before the barge-in.
                                         pending_segments.clear()
