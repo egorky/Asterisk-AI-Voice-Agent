@@ -607,12 +607,14 @@ class AzureTTSAdapter(TTSComponent):
         self._session: Optional[aiohttp.ClientSession] = None
         self._chunk_size_ms = int(self._pipeline_defaults.get("chunk_size_ms", provider_config.chunk_size_ms))
         # Public attribute: engine pipeline runner checks this to decide playback strategy.
-        # Values: "auto" (use global downstream_mode), "stream", "file".
-        self.downstream_mode_override: str = str(
-            self._pipeline_defaults.get("downstream_mode_override")
-            or getattr(provider_config, "downstream_mode_override", "auto")
-            or "auto"
+        # Derived automatically from the 'streaming' flag so both sides of the pipeline
+        # (Azure HTTP fetch and Asterisk playback) are always in sync:
+        #   streaming=True  → download chunks AND play in real-time  → "stream"
+        #   streaming=False → wait for full audio AND play as file   → "file"
+        _use_streaming = bool(
+            self._pipeline_defaults.get("streaming", getattr(provider_config, "streaming", True))
         )
+        self.downstream_mode_override: str = "stream" if _use_streaming else "file"
 
     async def start(self) -> None:
         logger.debug(

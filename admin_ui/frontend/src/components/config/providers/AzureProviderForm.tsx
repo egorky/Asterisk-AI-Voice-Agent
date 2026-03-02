@@ -363,32 +363,6 @@ const AzureProviderForm: React.FC<AzureProviderFormProps> = ({ config, onChange 
                             </div>
                         </div>
 
-                        {/* Downstream mode override */}
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium">
-                                Downstream Playback Mode{' '}
-                                <span className="text-muted-foreground text-xs font-normal">(toward Asterisk)</span>
-                            </label>
-                            <select
-                                className="w-full p-2 rounded border border-input bg-background"
-                                value={config.downstream_mode_override || 'auto'}
-                                onChange={(e) => handleChange('downstream_mode_override', e.target.value)}
-                            >
-                                <option value="auto">Auto (follow global downstream_mode)</option>
-                                <option value="stream">Force Stream (StreamingPlaybackManager)</option>
-                                <option value="file">Force File (file-based playback)</option>
-                            </select>
-                            <p className="text-xs text-muted-foreground">
-                                Controls how Azure TTS audio is sent to Asterisk, independently of the global{' '}
-                                <code>downstream_mode</code> setting.{' '}
-                                <strong>Auto</strong> preserves existing behaviour.{' '}
-                                <strong>Force Stream</strong> enables real-time audio playback even when the
-                                global mode is <code>file</code> — recommended when using{' '}
-                                <em>Streaming (chunked response)</em> above for best latency.{' '}
-                                <strong>Force File</strong> accumulates all chunks and plays them at once.
-                            </p>
-                        </div>
-
                         {/* Prosody (SSML) */}
                         <details className="border border-border rounded-md">
                             <summary className="p-3 text-sm font-medium cursor-pointer hover:bg-accent">Voice Prosody (pitch &amp; rate)</summary>
