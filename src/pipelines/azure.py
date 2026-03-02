@@ -878,9 +878,9 @@ class AzureTTSAdapter(TTSComponent):
         result_future = synthesizer.start_speaking_ssml_async(ssml)
 
         def _read_chunk() -> bytes:
-            buf = bytes(4096)
+            buf = bytearray(4096)
             filled_size = pull_stream.read(buf)
-            return buf[:filled_size] if filled_size > 0 else b""
+            return bytes(buf[:filled_size]) if filled_size > 0 else b""
 
         is_riff = "riff" in fmt_lower
         is_raw_mulaw = "mulaw" in fmt_lower and "raw" in fmt_lower
@@ -892,10 +892,18 @@ class AzureTTSAdapter(TTSComponent):
         first_chunk = True
 
         try:
+            loop = asyncio.get_running_loop()
             while True:
-                raw_chunk = await asyncio.to_thread(_read_chunk)
+                # Use run_in_executor to avoid blocking the main event loop
+                raw_chunk = await loop.run_in_executor(None, _read_chunk)
                 if not raw_chunk:
-                    break
+                    # Check if the synthesis is actually completed or failed yet
+                    # The get() on result_future is blocking, so we check status instead
+                    if result_future.is_completed:
+                        break
+                    # Give control back to the event loop if no bytes are ready yet
+                    await asyncio.sleep(0.01)
+                    continue
 
                 if first_chunk:
                     latency_ms = (time.perf_counter() - started_at) * 1000.0
@@ -945,6 +953,8 @@ class AzureTTSAdapter(TTSComponent):
 
                 for chunk in _chunk_audio(converted, target_encoding, target_rate, chunk_ms):
                     if chunk:
+                        # Add a small yield to let other tasks run (like ingest queue)
+                        await asyncio.sleep(0)
                         yield chunk
 
             result = result_future.get()
