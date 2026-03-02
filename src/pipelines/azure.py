@@ -620,6 +620,10 @@ class AzureSTTRealtimeAdapter(STTComponent):
         # We don't need intermediate results unless needed for UI, but engine expects just final right now
         # Actually Azure SDK yields both. We will catch "recognized" for final
         speech_config.output_format = speechsdk.OutputFormat.Detailed
+        # Configure Azure SDK VAD to be very aggressive (300ms) since Asterisk TalkDetect does the real VAD.
+        # This prevents 2+ seconds of latency waiting for Azure's internal silence timeout.
+        speech_config.set_property(speechsdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "300")
+        speech_config.set_property(speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, "300")
 
         # 2. Setup Push Stream
         # SDK expects 1 channel, 16-bit, native sample rate
