@@ -488,6 +488,7 @@ class Engine:
         # Pipeline runtime structures (Milestone 7): per-call audio queues and runner tasks
         self._pipeline_queues: Dict[str, asyncio.Queue] = {}
         self._pipeline_tasks: Dict[str, asyncio.Task] = {}
+        self._pipeline_transcript_queues: Dict[str, asyncio.Queue] = {}
         # Per-call background tasks (fire-and-forget) that should be cancelled on cleanup
         self._call_bg_tasks: Dict[str, Set[asyncio.Task]] = {}
         # Track calls where a pipeline was explicitly requested via AI_PROVIDER
@@ -3291,6 +3292,13 @@ class Engine:
             start_task = self._provider_start_tasks.pop(session.call_id, None)
             if start_task:
                 start_task.cancel()
+            # Also clean up pipeline tasks and queues
+            for task in getattr(self, "_pipeline_tasks", {}).pop(session.call_id, set()):
+                if task and not task.done():
+                    task.cancel()
+            getattr(self, "_pipeline_queues", {}).pop(session.call_id, None)
+            getattr(self, "_pipeline_transcript_queues", {}).pop(session.call_id, None)
+            self._pipeline_forced.pop(session.call_id, None)
         except Exception:
             pass
         provider = self._call_providers.pop(session.call_id, None)
@@ -3738,7 +3746,7 @@ class Engine:
         if not announcement_template.strip():
             announcement_template = "Hi, this is Ava. I'm transferring {caller_display} regarding {context_name}."
         if not prompt_template.strip():
-            prompt_template = "Press 1 to accept this transfer, or 2 to decline."
+            prompt_template = "Press 1 to accept, or 2 to decline."
 
         try:
             announcement_text = announcement_template.format(**template_vars)
@@ -3916,6 +3924,13 @@ class Engine:
             start_task = self._provider_start_tasks.pop(call_id, None)
             if start_task:
                 start_task.cancel()
+            # Also clean up pipeline tasks and queues
+            for task in getattr(self, "_pipeline_tasks", {}).pop(call_id, set()):
+                if task and not task.done():
+                    task.cancel()
+            getattr(self, "_pipeline_queues", {}).pop(call_id, None)
+            getattr(self, "_pipeline_transcript_queues", {}).pop(call_id, None)
+            self._pipeline_forced.pop(call_id, None)
         except Exception:
             pass
         provider = self._call_providers.pop(call_id, None)
@@ -4385,9 +4400,9 @@ class Engine:
             # Explicitly flush STT adapters that support early flushing via TalkDetect
             import asyncio
             try:
-                pipeline = getattr(self, "_resolve_pipeline", lambda x: None)(session)
-                if not pipeline and hasattr(self, "_active_pipelines"):
-                    pipeline = self._active_pipelines.get(call_id)
+                pipeline = None
+                if getattr(self, "pipeline_orchestrator", None):
+                    pipeline = self.pipeline_orchestrator.get_pipeline(call_id, getattr(session, "pipeline_name", None))
                 
                 if pipeline and hasattr(pipeline, "stt_adapter"):
                     stt = pipeline.stt_adapter
@@ -4397,10 +4412,17 @@ class Engine:
                         # and we don't want to block the ARI event loop.
                         async def _flush_and_process():
                             try:
-                                transcript = await stt.flush_speech(call_id, pipeline.options.get("stt", {}))
+                                transcript = await stt.flush_speech(call_id, pipeline.options_summary().get("stt", {}))
                                 if transcript:
-                                    # Send the transcript into the LLM/TTS pipeline
-                                    await self._run_llm_tts_pipeline(call_id, pipeline, transcript)
+                                    logger.debug("Early STT flush returned transcript", call_id=call_id, transcript_preview=transcript[:50])
+                                    tq = getattr(self, "_pipeline_transcript_queues", {}).get(call_id)
+                                    if tq:
+                                        try:
+                                            tq.put_nowait(transcript)
+                                        except asyncio.QueueFull:
+                                            pass
+                                    else:
+                                        logger.warning("Pipeline transcript queue not found for early flush", call_id=call_id)
                             except Exception as e:
                                 logger.error("Background flush_speech failed", call_id=call_id, error=str(e))
                         asyncio.create_task(_flush_and_process())
@@ -4622,6 +4644,7 @@ class Engine:
                         q.put_nowait(None)
                     except Exception:
                         pass
+                self._pipeline_transcript_queues.pop(call_id, None)
                 try:
                     await self._disable_pipeline_talk_detect(session)
                 except Exception:
@@ -9219,6 +9242,7 @@ class Engine:
 
             buffer_queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=200)
             transcript_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(maxsize=8)
+            self._pipeline_transcript_queues[call_id] = transcript_queue
 
             use_streaming = bool(stt_options.get("streaming", True))
             if use_streaming:
