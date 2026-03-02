@@ -625,6 +625,10 @@ class AzureSTTRealtimeAdapter(STTComponent):
         timeout_ms = str(merged.get("vad_silence_timeout_ms", 300))
         speech_config.set_property(speechsdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, timeout_ms)
         speech_config.set_property(speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, timeout_ms)
+        
+        # Configure the initial silence timeout before Azure gives up waiting for the user to start speaking
+        initial_timeout_ms = str(merged.get("vad_initial_silence_timeout_ms", 5000))
+        speech_config.set_property(speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, initial_timeout_ms)
 
         # 2. Setup Push Stream
         # SDK expects 1 channel, 16-bit, native sample rate

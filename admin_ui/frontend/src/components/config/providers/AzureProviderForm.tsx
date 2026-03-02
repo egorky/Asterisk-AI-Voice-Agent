@@ -211,7 +211,7 @@ const AzureProviderForm: React.FC<AzureProviderFormProps> = ({ config, onChange 
                                     <p className="text-xs text-muted-foreground">The API version for the fast transcription endpoint.</p>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-sm font-medium">Real-Time VAD Silence Timeout (ms)</label>
+                                    <label className="text-sm font-medium">Real-Time VAD End Silence Timeout (ms)</label>
                                     <input
                                         type="number"
                                         min="50"
@@ -220,7 +220,19 @@ const AzureProviderForm: React.FC<AzureProviderFormProps> = ({ config, onChange 
                                         value={config.vad_silence_timeout_ms ?? 300}
                                         onChange={(e) => handleChange('vad_silence_timeout_ms', parseInt(e.target.value))}
                                     />
-                                    <p className="text-xs text-muted-foreground">Azure SDK internal VAD aggressiveness. Default is 300ms since Asterisk handles primary TalkDetect.</p>
+                                    <p className="text-xs text-muted-foreground">Azure SDK end silence timeout. Default is 300ms since Asterisk handles primary TalkDetect.</p>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">Real-Time VAD Initial Silence Timeout (ms)</label>
+                                    <input
+                                        type="number"
+                                        min="1000"
+                                        step="500"
+                                        className="w-full p-2 rounded border border-input bg-background"
+                                        value={config.vad_initial_silence_timeout_ms ?? 5000}
+                                        onChange={(e) => handleChange('vad_initial_silence_timeout_ms', parseInt(e.target.value))}
+                                    />
+                                    <p className="text-xs text-muted-foreground">How long Azure waits for speech to begin before stopping. Default is 5000ms.</p>
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-sm font-medium">Request Timeout (seconds)</label>
