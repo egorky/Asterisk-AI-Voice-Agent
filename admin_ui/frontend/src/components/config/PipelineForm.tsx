@@ -37,7 +37,7 @@ const PipelineForm: React.FC<PipelineFormProps> = ({ config, providers, onChange
         () => config?.options?.llm?.tools_enabled !== undefined || Boolean(config?.options?.llm?.realtime_model) || config?.options?.llm?.aggregation_min_words !== undefined || config?.options?.llm?.aggregation_min_chars !== undefined
     );
     const [showSttExpert, setShowSttExpert] = useState<boolean>(
-        () => (Array.isArray(config?.options?.stt?.timestamp_granularities) && config.options.stt.timestamp_granularities.length > 0) || config?.options?.stt?.vad_silence_ms !== undefined
+        () => Array.isArray(config?.options?.stt?.timestamp_granularities) && config.options.stt.timestamp_granularities.length > 0
     );
     const [showTtsExpert, setShowTtsExpert] = useState<boolean>(
         () => config?.options?.tts?.response_format !== undefined || config?.options?.tts?.max_input_chars !== undefined
@@ -586,15 +586,6 @@ const PipelineForm: React.FC<PipelineFormProps> = ({ config, providers, onChange
                                         onChange={(e) => updateRoleOptions('stt', { language: e.target.value || undefined })}
                                         placeholder="en-US"
                                         tooltip="Override the BCP-47 locale for this pipeline slot."
-                                        disabled={!showSttExpert}
-                                    />
-                                    <FormInput
-                                        label="Azure STT VAD Silence (ms)"
-                                        type="number"
-                                        value={localConfig.options?.stt?.vad_silence_ms ?? ''}
-                                        onChange={(e) => updateRoleOptions('stt', { vad_silence_ms: e.target.value ? parseInt(e.target.value, 10) : undefined })}
-                                        placeholder="1500"
-                                        tooltip="Advanced: Time to wait (in ms) after user stops speaking to send chunk to Azure Fast API. Default is 1500ms."
                                         disabled={!showSttExpert}
                                     />
                                 </>

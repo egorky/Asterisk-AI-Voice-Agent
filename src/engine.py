@@ -4381,6 +4381,32 @@ class Engine:
                 return
             call_id = session.call_id
             logger.debug("TalkDetect finished", call_id=call_id, channel_id=channel_id)
+            
+            # Explicitly flush STT adapters that support early flushing via TalkDetect
+            import asyncio
+            try:
+                pipeline = getattr(self, "_resolve_pipeline", lambda x: None)(session)
+                if not pipeline and hasattr(self, "_active_pipelines"):
+                    pipeline = self._active_pipelines.get(call_id)
+                
+                if pipeline and hasattr(pipeline, "stt_adapter"):
+                    stt = pipeline.stt_adapter
+                    if hasattr(stt, "flush_speech") and callable(stt.flush_speech):
+                        logger.debug("Triggering early STT flush via TalkDetect", call_id=call_id)
+                        # We must dispatch this as a background task because it will do an HTTP request
+                        # and we don't want to block the ARI event loop.
+                        async def _flush_and_process():
+                            try:
+                                transcript = await stt.flush_speech(call_id, pipeline.options.get("stt", {}))
+                                if transcript:
+                                    # Send the transcript into the LLM/TTS pipeline
+                                    await self._run_llm_tts_pipeline(call_id, pipeline, transcript)
+                            except Exception as e:
+                                logger.error("Background flush_speech failed", call_id=call_id, error=str(e))
+                        asyncio.create_task(_flush_and_process())
+            except Exception as e:
+                logger.warning("Failed to trigger early STT flush", call_id=call_id, error=str(e))
+                
         except Exception:
             logger.debug("ChannelTalkingFinished handler failed", ari_event=event, exc_info=True)
 

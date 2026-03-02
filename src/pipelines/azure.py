@@ -338,9 +338,8 @@ class AzureSTTFastAdapter(STTComponent):
             frame_ms = 30
             bytes_per_frame = int((sample_rate_hz * 2 * frame_ms) / 1000)
             
-            # Allow user to configure the VAD silence timeout via pipeline STT options
-            vad_silence_ms = int(merged.get("vad_silence_ms", 1500))
-            self._max_silence_frames = max(1, vad_silence_ms // frame_ms)
+            # Default VAD silence timeout is 1500ms (50 frames of 30ms) since TalkDetect is the primary early-exit flush.
+            self._max_silence_frames = 50
             
             has_speech = False
             offset = 0
@@ -377,6 +376,44 @@ class AzureSTTFastAdapter(STTComponent):
         if not audio_to_send:
             return ""
 
+        transcript = self._parse_transcript(raw)
+        logger.info(
+            "Azure STT Fast transcript received",
+            call_id=call_id,
+            request_id=request_id,
+            latency_ms=round(latency_ms, 2),
+            transcript_preview=(transcript or "")[:80],
+        )
+        return transcript or ""
+
+    async def flush_speech(self, call_id: str, options: Dict[str, Any]) -> str:
+        """Force flush of any accumulated audio buffer to Azure STT."""
+        audio_to_send = b""
+        with self._buffer_lock:
+            if self._audio_buffer:
+                logger.debug("Azure STT Fast explicit flush triggered", call_id=call_id, buffer_size=len(self._audio_buffer))
+                audio_to_send = bytes(self._audio_buffer)
+                self._audio_buffer.clear()
+                self._is_speaking = False
+                self._silence_frames = 0
+                
+        if not audio_to_send:
+            return ""
+            
+        try:
+            return await self._execute_transcription(call_id, audio_to_send, 16000, options)
+        except Exception:
+            logger.error("Azure STT Fast explicit flush failed", call_id=call_id, exc_info=True)
+            return ""
+
+    async def _execute_transcription(
+        self,
+        call_id: str,
+        audio_to_send: bytes,
+        sample_rate_hz: int,
+        options: Dict[str, Any]
+    ) -> str:
+        merged = self._compose_options(options)
         await self._ensure_session()
         assert self._session
 
@@ -492,12 +529,6 @@ class AzureSTTFastAdapter(STTComponent):
                 runtime_options.get(
                     "request_timeout_sec",
                     self._pipeline_defaults.get("request_timeout_sec", self._default_timeout),
-                )
-            ),
-            "vad_silence_ms": int(
-                runtime_options.get(
-                    "vad_silence_ms",
-                    self._pipeline_defaults.get("vad_silence_ms", 1500)
                 )
             ),
         }
