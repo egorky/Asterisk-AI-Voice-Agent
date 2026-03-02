@@ -281,7 +281,10 @@ class AzureSTTFastAdapter(STTComponent):
             self._vad = webrtcvad.Vad(1)  # Moderate aggressiveness (0-3)
         self._is_speaking = False
         self._silence_frames = 0
-        self._max_silence_frames = 50  # ~1 sec at 20ms frames
+        
+        # Default ~1.5 sec at 30ms frames (50 * 30 = 1500), but we'll override this in transcribe
+        self._max_silence_frames = 50  
+        
         self._buffer_lock = threading.Lock()
         self._min_speech_frames_threshold = 5
 
@@ -335,6 +338,10 @@ class AzureSTTFastAdapter(STTComponent):
             frame_ms = 30
             bytes_per_frame = int((sample_rate_hz * 2 * frame_ms) / 1000)
             
+            # Allow user to configure the VAD silence timeout via pipeline STT options
+            vad_silence_ms = int(merged.get("vad_silence_ms", 1500))
+            self._max_silence_frames = max(1, vad_silence_ms // frame_ms)
+            
             has_speech = False
             offset = 0
             while offset + bytes_per_frame <= len(audio_pcm16):
@@ -357,8 +364,6 @@ class AzureSTTFastAdapter(STTComponent):
                     if self._is_speaking:
                         self._silence_frames += max(1, len(audio_pcm16) // bytes_per_frame)
 
-                # _max_silence_frames is roughly ~1 sec of silence. At 30ms per frame, 33 frames = ~1 sec.
-                # _max_silence_frames is initialized to 50 (~1.5s).
                 if self._is_speaking and self._silence_frames >= self._max_silence_frames:
                     audio_to_send = bytes(self._audio_buffer)
                     self._audio_buffer.clear()
@@ -393,6 +398,14 @@ class AzureSTTFastAdapter(STTComponent):
 
         headers = _make_stt_headers(api_key)
         started_at = time.perf_counter()
+
+        logger.info(
+            "Azure STT Fast sending HTTP POST request",
+            call_id=call_id,
+            request_id=request_id,
+            audio_duration_sec=round(len(audio_to_send) / (sample_rate_hz * 2), 2),
+            url=url,
+        )
 
         async with self._session.post(
             url,
@@ -479,6 +492,12 @@ class AzureSTTFastAdapter(STTComponent):
                 runtime_options.get(
                     "request_timeout_sec",
                     self._pipeline_defaults.get("request_timeout_sec", self._default_timeout),
+                )
+            ),
+            "vad_silence_ms": int(
+                runtime_options.get(
+                    "vad_silence_ms",
+                    self._pipeline_defaults.get("vad_silence_ms", 1500)
                 )
             ),
         }
