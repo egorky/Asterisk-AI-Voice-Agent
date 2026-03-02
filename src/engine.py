@@ -9081,17 +9081,7 @@ class Engine:
                                 if not chunk:
                                     continue
                                 any_audio = True
-                                while True:
-                                    try:
-                                        await asyncio.wait_for(q.put(chunk), timeout=0.1)
-                                        break
-                                    except asyncio.TimeoutError:
-                                        if not self.streaming_playback_manager.is_stream_active(call_id):
-                                            logger.debug("Playback aborted for pipeline-tts-greeting", call_id=call_id)
-                                            aborted = True
-                                            break
-                                if aborted:
-                                    break
+                                await q.put(chunk)
                             try:
                                 q.put_nowait(None)
                             except asyncio.QueueFull:
@@ -9636,15 +9626,7 @@ class Engine:
                                                 _TURN_STT_TO_TTS.labels(pipeline_label, provider_label).observe(max(0.0, first_tts_ts - t_start))
                                         except Exception:
                                             pass
-                                    while True:
-                                        try:
-                                            await asyncio.wait_for(stream_q.put(tts_chunk), timeout=0.1)
-                                            break
-                                        except asyncio.TimeoutError:
-                                            if not self.streaming_playback_manager.is_stream_active(call_id):
-                                                logger.debug("Playback aborted for pipeline-tts", call_id=call_id)
-                                                aborted = True
-                                                break
+                                    await stream_q.put(tts_chunk)
                                     if aborted:
                                         # Clear pending accumulation and the transcript queue
                                         # so the LLM doesn't process stale text from before the barge-in.
