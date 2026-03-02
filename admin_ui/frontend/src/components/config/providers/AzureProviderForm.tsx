@@ -200,6 +200,17 @@ const AzureProviderForm: React.FC<AzureProviderFormProps> = ({ config, onChange 
                                     />
                                 </div>
                                 <div className="space-y-2">
+                                    <label className="text-sm font-medium">Fast Transcription API Version (optional)</label>
+                                    <input
+                                        type="text"
+                                        className="w-full p-2 rounded border border-input bg-background font-mono text-sm"
+                                        value={config.api_version || ''}
+                                        onChange={(e) => handleChange('api_version', e.target.value || null)}
+                                        placeholder="2024-11-15"
+                                    />
+                                    <p className="text-xs text-muted-foreground">The API version for the fast transcription endpoint.</p>
+                                </div>
+                                <div className="space-y-2">
                                     <label className="text-sm font-medium">Request Timeout (seconds)</label>
                                     <input
                                         type="number"

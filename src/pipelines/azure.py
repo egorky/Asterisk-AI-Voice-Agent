@@ -16,18 +16,32 @@ Reference:
   TTS:         https://learn.microsoft.com/azure/ai-services/speech-service/get-started-text-to-speech?pivots=programming-language-rest
 """
 
-from __future__ import annotations
-
+import asyncio
 import json
+import tarfile
+import threading
 import time
 import uuid
 import wave
 from io import BytesIO
-from typing import Any, AsyncIterator, Callable, Dict, Iterable, Optional
+from typing import Any, AsyncIterator, Callable, Dict, Optional, Tuple, List
 
-import aiohttp
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None  # type: ignore
 
-from ..audio import convert_pcm16le_to_target_format, resample_audio
+try:
+    import webrtcvad
+except ImportError:
+    webrtcvad = None
+
+try:
+    import azure.cognitiveservices.speech as speechsdk
+except ImportError:
+    speechsdk = None
+
+from ..audio import convert_pcm16le_to_target_format as _to_target_format, resample_audio
 from ..config import AppConfig, AzureSTTProviderConfig, AzureTTSProviderConfig
 from ..logging_config import get_logger
 from .base import STTComponent, TTSComponent
@@ -88,8 +102,9 @@ def _wav_to_pcm16le(wav_bytes: bytes) -> tuple[bytes, int]:
         raise RuntimeError(f"Azure: failed to decode WAV response: {exc}") from exc
 
 
-def _build_azure_stt_fast_url(region: str) -> str:
-    return f"https://{region}.api.cognitive.microsoft.com/speechtotext/transcriptions:transcribe?api-version=2025-10-01"
+def _build_azure_stt_fast_url(region: str, api_version: str = "2024-11-15") -> str:
+    version = api_version.strip() or "2024-11-15"
+    return f"https://{region}.api.cognitive.microsoft.com/speechtotext/transcriptions:transcribe?api-version={version}"
 
 
 def _build_azure_stt_realtime_url(region: str, language: str) -> str:
@@ -258,6 +273,17 @@ class AzureSTTFastAdapter(STTComponent):
         self._default_timeout = float(
             self._pipeline_defaults.get("request_timeout_sec", provider_config.request_timeout_sec)
         )
+        
+        # Audio aggregation configuration for VAD-based batching
+        self._audio_buffer = bytearray()
+        self._vad = None
+        if webrtcvad is not None:
+            self._vad = webrtcvad.Vad(1)  # Moderate aggressiveness (0-3)
+        self._is_speaking = False
+        self._silence_frames = 0
+        self._max_silence_frames = 50  # ~1 sec at 20ms frames
+        self._buffer_lock = threading.Lock()
+        self._min_speech_frames_threshold = 5
 
     async def start(self) -> None:
         logger.debug(
@@ -274,9 +300,14 @@ class AzureSTTFastAdapter(STTComponent):
 
     async def open_call(self, call_id: str, options: Dict[str, Any]) -> None:
         await self._ensure_session()
+        with self._buffer_lock:
+            self._audio_buffer.clear()
+            self._is_speaking = False
+            self._silence_frames = 0
 
     async def close_call(self, call_id: str) -> None:
-        return
+        with self._buffer_lock:
+            self._audio_buffer.clear()
 
     async def validate_connectivity(self, options: Dict[str, Any]) -> Dict[str, Any]:
         merged = self._compose_options(options or {})
@@ -284,7 +315,8 @@ class AzureSTTFastAdapter(STTComponent):
         # The base class only does a lightweight URL-format check for non-primary providers.
         if not merged.get("base_url"):
             region = merged.get("region") or self._provider_defaults.region
-            merged["base_url"] = merged.get("fast_stt_base_url") or _build_azure_stt_fast_url(region)
+            api_version = merged.get("api_version") or "2024-11-15"
+            merged["base_url"] = merged.get("fast_stt_base_url") or _build_azure_stt_fast_url(region, api_version)
         return await super().validate_connectivity(merged)
 
     async def transcribe(
@@ -307,7 +339,7 @@ class AzureSTTFastAdapter(STTComponent):
 
         wav_bytes = _pcm16le_to_wav(audio_pcm16, sample_rate_hz)
         language = str(merged.get("language") or self._provider_defaults.language)
-        url = str(merged.get("fast_stt_base_url") or _build_azure_stt_fast_url(merged["region"]))
+        url = str(merged.get("fast_stt_base_url") or _build_azure_stt_fast_url(merged["region"], merged.get("api_version", "2024-11-15")))
         timeout_sec = float(merged.get("request_timeout_sec", self._default_timeout))
         request_id = f"azure-stt-fast-{uuid.uuid4().hex[:12]}"
 
@@ -389,6 +421,10 @@ class AzureSTTFastAdapter(STTComponent):
                 "region",
                 self._pipeline_defaults.get("region", self._provider_defaults.region),
             ),
+            "api_version": runtime_options.get(
+                "api_version",
+                self._pipeline_defaults.get("api_version", getattr(self._provider_defaults, "api_version", "2024-11-15")),
+            ),
             "fast_stt_base_url": runtime_options.get(
                 "fast_stt_base_url",
                 self._pipeline_defaults.get("fast_stt_base_url", self._provider_defaults.fast_stt_base_url),
@@ -411,12 +447,10 @@ class AzureSTTFastAdapter(STTComponent):
 # ---------------------------------------------------------------------------
 
 class AzureSTTRealtimeAdapter(STTComponent):
-    """Azure Real-Time Speech-to-Text REST adapter.
+    """Azure Real-Time Speech-to-Text SDK adapter.
 
-    Endpoint: POST {region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language={lang}
-    Auth:     Ocp-Apim-Subscription-Key header
-    Input:    audio/wav (raw binary body)
-    Output:   JSON { RecognitionStatus, DisplayText, ... }
+    Endpoint: wss://{region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1
+    Uses the official Azure Speech SDK for robust streaming and low latency.
     """
 
     def __init__(
@@ -437,34 +471,184 @@ class AzureSTTRealtimeAdapter(STTComponent):
         self._default_timeout = float(
             self._pipeline_defaults.get("request_timeout_sec", provider_config.request_timeout_sec)
         )
+        
+        # Audio formatting overrides
+        self._stt_options: Dict[str, Any] = {}
+        
+        # SDK-specific states per call
+        # Map of call_id -> dict of { recognizer, push_stream, queue, active }
+        self._active_sessions: Dict[str, Dict[str, Any]] = {}
 
     async def start(self) -> None:
         logger.debug(
-            "Azure STT Realtime adapter initialized",
+            "Azure STT Realtime SDK adapter initialized",
             component=self.component_key,
             region=self._provider_defaults.region,
             language=self._provider_defaults.language,
         )
 
     async def stop(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
-        self._session = None
+        # Clean up any active recognizers
+        for call_id in list(self._active_sessions.keys()):
+            await self.close_call(call_id)
 
     async def open_call(self, call_id: str, options: Dict[str, Any]) -> None:
-        await self._ensure_session()
+        # Save options for stream setup
+        self._stt_options[call_id] = options
 
     async def close_call(self, call_id: str) -> None:
-        return
+        if call_id in self._stt_options:
+            del self._stt_options[call_id]
+        await self.stop_stream(call_id)
 
     async def validate_connectivity(self, options: Dict[str, Any]) -> Dict[str, Any]:
         merged = self._compose_options(options or {})
-        # Inject the computed Azure URL so the base-class URL check passes.
-        if not merged.get("base_url"):
-            region = merged.get("region") or self._provider_defaults.region
-            language = merged.get("language") or self._provider_defaults.language
-            merged["base_url"] = merged.get("realtime_stt_base_url") or _build_azure_stt_realtime_url(region, language)
-        return await super().validate_connectivity(merged)
+        # Simply ensure credentials exist. SDK handles connectivity test.
+        api_key = merged.get("api_key")
+        if not api_key:
+            return {"healthy": False, "error": "Azure Speech Key missing", "details": {}}
+        return {"healthy": True, "error": None, "details": {"validation_level": "basic", "note": "SDK will handle connection"}}
+
+    async def start_stream(
+        self,
+        call_id: str,
+        options: Dict[str, Any],
+        sample_rate_hz: int = 8000,
+        fmt: str = "pcm16",
+    ) -> None:
+        """Initialize the Azure Speech Recognizer stream for this call."""
+        if not speechsdk:
+            raise RuntimeError("azure-cognitiveservices-speech package is not installed. Required for Azure STT Realtime.")
+            
+        merged = self._compose_options(options)
+        api_key = merged.get("api_key")
+        if not api_key:
+            raise RuntimeError("Azure STT Realtime requires AZURE_SPEECH_KEY / api_key")
+
+        language = str(merged.get("language") or self._provider_defaults.language)
+        region = str(merged.get("region") or self._provider_defaults.region)
+
+        # 1. Setup Azure Speech Config
+        speech_config = speechsdk.SpeechConfig(subscription=api_key, region=region)
+        speech_config.speech_recognition_language = language
+        
+        # Force low-latency settings where possible
+        # We don't need intermediate results unless needed for UI, but engine expects just final right now
+        # Actually Azure SDK yields both. We will catch "recognized" for final
+        speech_config.output_format = speechsdk.OutputFormat.Detailed
+
+        # 2. Setup Push Stream
+        # SDK expects 1 channel, 16-bit, native sample rate
+        stream_format = speechsdk.audio.AudioStreamFormat(samples_per_second=sample_rate_hz, bits_per_sample=16, channels=1)
+        push_stream = speechsdk.audio.PushAudioInputStream(stream_format=stream_format)
+        audio_config = speechsdk.audio.AudioConfig(stream=push_stream)
+
+        # 3. Create Recognizer
+        recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, audio_config=audio_config)
+        
+        # 4. Setup internal event queue
+        result_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(maxsize=100)
+        
+        # Bind Azure SDK event handlers (they run in background threads, so we must use thread-safe queue PUTs)
+        loop = asyncio.get_running_loop()
+        
+        def handle_recognized(evt: speechsdk.SessionEventArgs) -> None:
+            if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                text = evt.result.text
+                if text:
+                    logger.debug("Azure SDK Final Result", call_id=call_id, text=text)
+                    # Safely enqueue to asyncio from the SDK thread
+                    asyncio.run_coroutine_threadsafe(result_queue.put(text), loop)
+        
+        def handle_canceled(evt: speechsdk.SessionEventArgs) -> None:
+            if evt.reason == speechsdk.CancellationReason.Error:
+                logger.error("Azure SDK Canceled Error", call_id=call_id, details=evt.error_details)
+            asyncio.run_coroutine_threadsafe(result_queue.put(None), loop)
+            
+        def handle_session_stopped(evt: speechsdk.SessionEventArgs) -> None:
+            logger.debug("Azure SDK Session Stopped", call_id=call_id)
+            asyncio.run_coroutine_threadsafe(result_queue.put(None), loop)
+
+        # Wire up events
+        recognizer.recognized.connect(handle_recognized)
+        recognizer.canceled.connect(handle_canceled)
+        recognizer.session_stopped.connect(handle_session_stopped)
+        
+        # Start async recognition
+        recognizer.start_continuous_recognition_async()
+
+        self._active_sessions[call_id] = {
+            "recognizer": recognizer,
+            "push_stream": push_stream,
+            "queue": result_queue,
+            "active": True,
+            "sample_rate": sample_rate_hz
+        }
+        
+        logger.info("Azure STT SDK Stream started", call_id=call_id)
+
+    async def send_audio(self, call_id: str, audio_bytes: bytes, fmt: str = "pcm16") -> None:
+        """Push a chunk of PCM audio to the Azure SDK stream."""
+        session = self._active_sessions.get(call_id)
+        if not session or not session.get("active"):
+            return
+            
+        push_stream = session["push_stream"]
+        # Azure PushStream takes raw bytes directly
+        try:
+            push_stream.write(audio_bytes)
+        except Exception as exc:
+            logger.error("Azure SDK stream write failed", call_id=call_id, exc_info=exc)
+
+    async def iter_results(self, call_id: str) -> AsyncIterator[str]:
+        """Yield finalized transcripts coming from the SDK events."""
+        session = self._active_sessions.get(call_id)
+        if not session:
+            return
+            
+        queue: asyncio.Queue[Optional[str]] = session["queue"]
+        
+        while session.get("active"):
+            try:
+                transcript = await queue.get()
+                if transcript is None:
+                    # Session stopped or canceled
+                    break
+                yield transcript
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.error("Azure SDK result iterations error", call_id=call_id, exc_info=exc)
+                break
+
+    async def stop_stream(self, call_id: str) -> None:
+        """Close the input stream and stop the recognizer gracefully."""
+        session = self._active_sessions.pop(call_id, None)
+        if not session:
+            return
+            
+        session["active"] = False
+        
+        # Close audio stream so Azure knows input is done
+        push_stream = session.get("push_stream")
+        if push_stream:
+            try:
+                push_stream.close()
+            except Exception:
+                pass
+                
+        # Stop recognizer
+        recognizer = session.get("recognizer")
+        if recognizer:
+            try:
+                # Stop blocks until final processed segments finish, which may take seconds.
+                # In asyncio context, best to run it in thread to avoid blocking loop if slow.
+                logger.debug("Stopping Azure SDK continuous recognition", call_id=call_id)
+                await asyncio.to_thread(recognizer.stop_continuous_recognition)
+            except Exception:
+                pass
+
+        logger.info("Azure STT SDK Stream stopped", call_id=call_id)
 
     async def transcribe(
         self,
@@ -473,81 +657,18 @@ class AzureSTTRealtimeAdapter(STTComponent):
         sample_rate_hz: int,
         options: Dict[str, Any],
     ) -> str:
-        if not audio_pcm16:
-            return ""
-
-        await self._ensure_session()
-        assert self._session
-
-        merged = self._compose_options(options)
-        api_key = merged.get("api_key") or ""
-        if not api_key:
-            raise RuntimeError("Azure STT Realtime requires AZURE_SPEECH_KEY / api_key")
-
-        language = str(merged.get("language") or self._provider_defaults.language)
-        region = str(merged.get("region") or self._provider_defaults.region)
-        url = str(
-            merged.get("realtime_stt_base_url")
-            or _build_azure_stt_realtime_url(region, language)
+        # Fallback for chunked mode (if engine forces chunking)
+        # For SDK, we use Fast API for one-shot since continuous recognizer is async
+        logger.warning("Azure SDK `transcribe` fallback called (engine forced chunking). Forwarding to Fast API.")
+        # But we don't have direct access. To simplify, we implement basic STT using Azure fast API manually
+        fast_adapter = AzureSTTFastAdapter(
+            self.component_key + "_fast", 
+            self._app_config, 
+            self._provider_defaults, 
+            options, 
+            session_factory=self._session_factory
         )
-        timeout_sec = float(merged.get("request_timeout_sec", self._default_timeout))
-        request_id = f"azure-stt-rt-{uuid.uuid4().hex[:12]}"
-
-        wav_bytes = _pcm16le_to_wav(audio_pcm16, sample_rate_hz)
-        headers = {**_make_stt_headers(api_key), "Content-Type": "audio/wav"}
-
-        started_at = time.perf_counter()
-        async with self._session.post(
-            url,
-            data=wav_bytes,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=timeout_sec),
-        ) as resp:
-            raw = await resp.read()
-            latency_ms = (time.perf_counter() - started_at) * 1000.0
-            body_text = raw.decode("utf-8", errors="ignore")
-
-            if resp.status >= 400:
-                logger.error(
-                    "Azure STT Realtime request failed",
-                    call_id=call_id,
-                    request_id=request_id,
-                    status=resp.status,
-                    body_preview=body_text[:200],
-                )
-                raise RuntimeError(
-                    f"Azure STT Realtime request failed (status {resp.status}): {body_text[:256]}"
-                )
-
-        transcript = self._parse_transcript(raw)
-        logger.info(
-            "Azure STT Realtime transcript received",
-            call_id=call_id,
-            request_id=request_id,
-            latency_ms=round(latency_ms, 2),
-            transcript_preview=(transcript or "")[:80],
-        )
-        return transcript or ""
-
-    async def _ensure_session(self) -> None:
-        if self._session and not self._session.closed:
-            return
-        factory = self._session_factory or aiohttp.ClientSession
-        self._session = factory()
-
-    @staticmethod
-    def _parse_transcript(payload: bytes) -> str:
-        try:
-            data = json.loads(payload.decode("utf-8"))
-        except Exception:
-            return payload.decode("utf-8", errors="ignore").strip()
-
-        # Real-time STT response: { RecognitionStatus: "Success", DisplayText: "..." }
-        status = data.get("RecognitionStatus", "")
-        if status not in ("Success", ""):
-            logger.debug("Azure STT Realtime: non-success status", recognition_status=status)
-        display_text = data.get("DisplayText", "")
-        return str(display_text).strip() if display_text else ""
+        return await fast_adapter.transcribe(call_id, audio_pcm16, sample_rate_hz, options)
 
     def _compose_options(self, runtime_options: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         runtime_options = runtime_options or {}
@@ -559,10 +680,6 @@ class AzureSTTRealtimeAdapter(STTComponent):
             "region": runtime_options.get(
                 "region",
                 self._pipeline_defaults.get("region", self._provider_defaults.region),
-            ),
-            "realtime_stt_base_url": runtime_options.get(
-                "realtime_stt_base_url",
-                self._pipeline_defaults.get("realtime_stt_base_url", self._provider_defaults.realtime_stt_base_url),
             ),
             "language": runtime_options.get(
                 "language",
@@ -731,6 +848,7 @@ class AzureTTSAdapter(TTSComponent):
                 header_consumed = not is_riff  # raw formats have no header to skip
                 WAV_HEADER_SIZE = 44
                 header_buf = bytearray()
+                leftover_byte: bytes = b""
 
                 first_chunk = True
                 async for raw_chunk in resp.content.iter_chunked(4096):
@@ -744,6 +862,10 @@ class AzureTTSAdapter(TTSComponent):
                             voice=voice_name,
                         )
                         first_chunk = False
+                        
+                    if leftover_byte:
+                        raw_chunk = leftover_byte + raw_chunk
+                        leftover_byte = b""
 
                     if not header_consumed:
                         header_buf.extend(raw_chunk)
@@ -754,6 +876,10 @@ class AzureTTSAdapter(TTSComponent):
                         header_consumed = True
                     else:
                         pcm_payload = raw_chunk
+                        
+                    if len(pcm_payload) % 2 != 0:
+                        leftover_byte = pcm_payload[-1:]
+                        pcm_payload = pcm_payload[:-1]
 
                     if not pcm_payload:
                         continue
@@ -775,7 +901,7 @@ class AzureTTSAdapter(TTSComponent):
                             source_rate = 8000
                         if source_rate != target_rate:
                             audio_bytes, _ = resample_audio(audio_bytes, source_rate, target_rate)
-                        converted = convert_pcm16le_to_target_format(audio_bytes, target_encoding)
+                        converted = _to_target_format(audio_bytes, target_encoding)
 
                     for chunk in _chunk_audio(converted, target_encoding, target_rate, chunk_ms):
                         if chunk:
@@ -798,7 +924,7 @@ class AzureTTSAdapter(TTSComponent):
             # Resample if needed, then convert to target encoding
             if source_rate != target_rate:
                 audio_bytes, _ = resample_audio(audio_bytes, source_rate, target_rate)
-            converted = convert_pcm16le_to_target_format(audio_bytes, target_encoding)
+            converted = _to_target_format(audio_bytes, target_encoding)
         else:
             # Unknown encoding — pass through as-is
             converted = audio_bytes
