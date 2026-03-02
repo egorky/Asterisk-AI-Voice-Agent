@@ -9076,11 +9076,22 @@ class Engine:
                             if not stream_id:
                                 raise RuntimeError("start_streaming_playback returned no stream_id")
                             any_audio = False
+                            aborted = False
                             async for chunk in pipeline.tts_adapter.synthesize(call_id, greeting, pipeline.tts_options):
                                 if not chunk:
                                     continue
                                 any_audio = True
-                                await q.put(chunk)
+                                while True:
+                                    try:
+                                        await asyncio.wait_for(q.put(chunk), timeout=0.1)
+                                        break
+                                    except asyncio.TimeoutError:
+                                        if not self.streaming_playback_manager.is_stream_active(call_id):
+                                            logger.debug("Playback aborted for pipeline-tts-greeting", call_id=call_id)
+                                            aborted = True
+                                            break
+                                if aborted:
+                                    break
                             try:
                                 q.put_nowait(None)
                             except asyncio.QueueFull:
@@ -9612,6 +9623,7 @@ class Engine:
                                 playback_id = stream_id
                                 first_tts_ts: Optional[float] = None
 
+                                aborted = False
                                 async for tts_chunk in pipeline.tts_adapter.synthesize(call_id, response_text, pipeline.tts_options):
                                     if not tts_chunk:
                                         continue
@@ -9624,7 +9636,17 @@ class Engine:
                                                 _TURN_STT_TO_TTS.labels(pipeline_label, provider_label).observe(max(0.0, first_tts_ts - t_start))
                                         except Exception:
                                             pass
-                                    await stream_q.put(tts_chunk)
+                                    while True:
+                                        try:
+                                            await asyncio.wait_for(stream_q.put(tts_chunk), timeout=0.1)
+                                            break
+                                        except asyncio.TimeoutError:
+                                            if not self.streaming_playback_manager.is_stream_active(call_id):
+                                                logger.debug("Playback aborted for pipeline-tts", call_id=call_id)
+                                                aborted = True
+                                                break
+                                    if aborted:
+                                        break
 
                                 # End-of-segment sentinel
                                 try:
