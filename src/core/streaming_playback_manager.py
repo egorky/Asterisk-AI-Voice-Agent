@@ -468,12 +468,19 @@ class StreamingPlaybackManager:
             
             # 🧠 Calculate intelligent buffer size
             base_config_ms = max(1, int(self.greeting_min_start_ms if playback_type == "greeting" else self.min_start_ms))
-            intelligent_buffer_ms = calculate_optimal_buffer(
-                stream_pattern=cached_pattern,
-                wire_sample_rate=wire_sample_rate,
-                provider_sample_rate=provider_sample_rate,
-                base_config_ms=base_config_ms
-            )
+            
+            # OPTIMIZATION: Google Live already sends massive bursts (~960ms). 
+            # We don't need additional warm-up for it as the first burst covers almost a second.
+            if provider_name == 'google_live':
+                intelligent_buffer_ms = 40  # Start immediately (min 40ms)
+                logger.info("⚡ GOOGLE LIVE OPTIMIZATION - Minimal warm-up buffer", call_id=call_id, buffer_ms=intelligent_buffer_ms)
+            else:
+                intelligent_buffer_ms = calculate_optimal_buffer(
+                    stream_pattern=cached_pattern,
+                    wire_sample_rate=wire_sample_rate,
+                    provider_sample_rate=provider_sample_rate,
+                    base_config_ms=base_config_ms
+                )
             
             logger.info(
                 "🧠 Intelligent buffer calculated",

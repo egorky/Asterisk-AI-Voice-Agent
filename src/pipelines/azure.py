@@ -923,7 +923,7 @@ class AzureTTSAdapter(TTSComponent):
                     f"Azure TTS request failed (status {resp.status}): {body_text[:256]}"
                 )
 
-            latency_ms = (time.perf_counter() - started_at) * 1000.0
+            ttfb_ms = (time.perf_counter() - started_at) * 1000.0
 
             if use_streaming:
                 # Stream chunks as they arrive from Azure — minimises time-to-first-audio.
@@ -955,7 +955,7 @@ class AzureTTSAdapter(TTSComponent):
                         logger.info(
                             "Azure TTS first chunk received (streaming)",
                             call_id=call_id,
-                            latency_ms=round(latency_ms, 2),
+                            ttfb_ms=round(ttfb_ms, 2),
                             voice=voice_name,
                         )
                         first_chunk = False
@@ -1026,11 +1026,14 @@ class AzureTTSAdapter(TTSComponent):
             # Unknown encoding — pass through as-is
             converted = audio_bytes
 
+        total_latency_ms = (time.perf_counter() - started_at) * 1000.0
+
         logger.info(
             "Azure TTS synthesis completed",
             call_id=call_id,
             output_bytes=len(converted),
-            latency_ms=round(latency_ms, 2),
+            ttfb_ms=round(ttfb_ms, 2),
+            total_duration_ms=round(total_latency_ms, 2),
             target_encoding=target_encoding,
             target_sample_rate=target_rate,
         )

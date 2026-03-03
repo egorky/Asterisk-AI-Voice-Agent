@@ -8035,9 +8035,9 @@ class Engine:
                 # Coalescing settings
                 coalesce_enabled = bool(getattr(getattr(self.config, 'streaming', {}), 'coalesce_enabled', False))
                 try:
-                    coalesce_min_ms = int(getattr(self.config.streaming, 'coalesce_min_ms', 600))
+                    coalesce_min_ms = int(getattr(self.config.streaming, 'coalesce_min_ms', 200))
                 except Exception:
-                    coalesce_min_ms = 600
+                    coalesce_min_ms = 200
                 try:
                     micro_fallback_ms = int(getattr(self.config.streaming, 'micro_fallback_ms', 300))
                 except Exception:
