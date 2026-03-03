@@ -61,10 +61,22 @@ const GoogleProviderForm: React.FC<GoogleProviderFormProps> = ({ config, onChang
                             <label className="text-sm font-medium">LLM Model</label>
                             <input
                                 type="text"
+                                list="gemini-models"
                                 className="w-full p-2 rounded border border-input bg-background"
                                 value={config.llm_model || 'models/gemini-1.5-pro-latest'}
                                 onChange={(e) => handleChange('llm_model', e.target.value)}
                             />
+                            <datalist id="gemini-models">
+                                <option value="models/gemini-2.5-flash" />
+                                <option value="models/gemini-2.5-pro" />
+                                <option value="models/gemini-2.0-flash-exp" />
+                                <option value="models/gemini-2.0-pro-exp-02-05" />
+                                <option value="models/gemini-2.0-flash-lite-preview-02-05" />
+                                <option value="models/gemini-1.5-pro-latest" />
+                                <option value="models/gemini-1.5-flash-latest" />
+                                <option value="gemini-1.5-pro" />
+                                <option value="gemini-1.5-flash" />
+                            </datalist>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Temperature</label>
@@ -83,6 +95,27 @@ const GoogleProviderForm: React.FC<GoogleProviderFormProps> = ({ config, onChang
                                 className="w-full p-2 rounded border border-input bg-background"
                                 value={config.llm_max_output_tokens || 8192}
                                 onChange={(e) => handleChange('llm_max_output_tokens', parseInt(e.target.value))}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Top P</label>
+                            <input
+                                type="number"
+                                step="0.05"
+                                min="0"
+                                max="1"
+                                className="w-full p-2 rounded border border-input bg-background"
+                                value={config.llm_top_p || 0.95}
+                                onChange={(e) => handleChange('llm_top_p', parseFloat(e.target.value))}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Top K</label>
+                            <input
+                                type="number"
+                                className="w-full p-2 rounded border border-input bg-background"
+                                value={config.llm_top_k || 40}
+                                onChange={(e) => handleChange('llm_top_k', parseInt(e.target.value))}
                             />
                         </div>
                     </div>

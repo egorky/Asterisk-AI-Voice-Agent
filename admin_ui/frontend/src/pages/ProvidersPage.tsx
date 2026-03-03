@@ -1176,6 +1176,7 @@ const ProvidersPage: React.FC = () => {
                         <h4 className="text-sm font-medium">Modular Providers (Cloud)</h4>
                         {[
                             { id: 'telnyx_llm', name: 'Telnyx LLM', desc: 'Telnyx AI Inference (OpenAI-compatible /chat/completions)' },
+                            { id: 'google_llm', name: 'Google Gemini LLM', desc: 'Google Gemini Modular Provider' },
                         ].map(template => (
                             <label key={template.id} className="flex items-start gap-3 p-3 border rounded-lg hover:bg-accent/50 cursor-pointer">
                                 <input
