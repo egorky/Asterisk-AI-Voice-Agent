@@ -1649,10 +1649,10 @@ streaming:
   # ExternalMedia greeting reliability: wait briefly for inbound RTP to establish the remote endpoint,
   # then fall back to file playback if RTP is still not routable (Asterisk may not emit RTP until speech).
   greeting_rtp_wait_ms: 250
-  jitter_buffer_ms: 400
+  jitter_buffer_ms: 950
   keepalive_interval_ms: 5000
   low_watermark_ms: 80
-  min_start_ms: 120
+  min_start_ms: 60
   normalizer:
     enabled: true
     max_gain_db: 18
