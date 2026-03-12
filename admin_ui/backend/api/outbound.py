@@ -606,6 +606,133 @@ async def list_leads(
     return await store.list_leads(campaign_id, page=page, page_size=page_size, state=state, q=q)
 
 
+class BulkRecycleRequest(BaseModel):
+    state: str  # The lead state to recycle (e.g. 'canceled', 'failed', 'completed')
+    mode: str = Field("redial", pattern="^(redial|reset)$")
+
+
+@router.post("/campaigns/{campaign_id}/leads/bulk-recycle")
+async def bulk_recycle_leads(campaign_id: str, req: BulkRecycleRequest):
+    """
+    Recycle all leads in a given state back to 'pending'.
+
+    - mode=redial: keeps attempt history, just re-queues the lead
+    - mode=reset:  deletes attempt history and resets attempt_count to 0
+    """
+    store = _get_outbound_store()
+    try:
+        # Fetch all leads in the requested state (no pagination — process all)
+        page = 1
+        page_size = 200
+        recycled = 0
+        while True:
+            result = await store.list_leads(
+                campaign_id, page=page, page_size=page_size, state=req.state
+            )
+            leads = result.get("leads") or []
+            if not leads:
+                break
+            for lead in leads:
+                ok = await store.recycle_lead(lead["id"], mode=req.mode)
+                if ok:
+                    recycled += 1
+            if page >= (result.get("total_pages") or 1):
+                break
+            page += 1
+        return {"recycled": recycled, "state": req.state, "mode": req.mode}
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+
+@router.get("/campaigns/{campaign_id}/leads/export.csv")
+async def export_leads_csv(campaign_id: str):
+    """
+    Export all leads for a campaign as a CSV file.
+
+    Includes all lead fields plus the bot conversation text extracted from
+    call history (the full text the bot spoke during the call).
+    """
+    store = _get_outbound_store()
+
+    # Fetch call history store to resolve transcripts
+    try:
+        from src.core.call_history import get_call_history_store
+        ch_store = get_call_history_store()
+    except Exception:
+        ch_store = None
+
+    # Helper: extract bot utterances from a call record
+    def _extract_bot_text(record) -> str:
+        if not record:
+            return ""
+        history = getattr(record, "conversation_history", None) or []
+        if isinstance(history, str):
+            try:
+                import json as _json
+                history = _json.loads(history)
+            except Exception:
+                return ""
+        parts = []
+        for turn in (history if isinstance(history, list) else []):
+            role = (turn.get("role") or "").lower()
+            if role in ("assistant", "bot", "agent"):
+                content = turn.get("content") or turn.get("text") or ""
+                if content:
+                    parts.append(str(content).strip())
+        return " | ".join(parts)
+
+    # Collect all leads (paginate through them)
+    all_leads: list = []
+    page = 1
+    page_size = 200
+    while True:
+        result = await store.list_leads(campaign_id, page=page, page_size=page_size)
+        chunk = result.get("leads") or []
+        all_leads.extend(chunk)
+        if page >= (result.get("total_pages") or 1):
+            break
+        page += 1
+
+    # Build CSV
+    import csv as _csv
+    buf = io.StringIO()
+    fieldnames = [
+        "id", "name", "phone_number", "state", "attempt_count",
+        "last_outcome", "last_started_at_utc", "last_duration_seconds",
+        "last_amd_status", "last_amd_cause", "last_provider",
+        "context_override", "lead_timezone", "caller_id_override",
+        "last_call_history_call_id", "last_error_message", "bot_conversation_text",
+    ]
+    writer = _csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+
+    for lead in all_leads:
+        bot_text = ""
+        call_hist_id = lead.get("last_call_history_call_id")
+        if call_hist_id and ch_store:
+            try:
+                record = await ch_store.get(call_hist_id)
+                if not record:
+                    # fallback: try by call_id
+                    record = await ch_store.get_by_call_id(call_hist_id)
+                bot_text = _extract_bot_text(record)
+            except Exception:
+                bot_text = ""
+        row = {k: lead.get(k, "") for k in fieldnames}
+        row["bot_conversation_text"] = bot_text
+        # Normalize None → empty string
+        row = {k: ("" if v is None else v) for k, v in row.items()}
+        writer.writerow(row)
+
+    csv_bytes = buf.getvalue().encode("utf-8-sig")  # BOM for Excel compatibility
+    filename = f"campaign_{campaign_id[:8]}_leads_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/leads/{lead_id}/cancel")
 async def cancel_lead(lead_id: str):
     store = _get_outbound_store()
@@ -613,6 +740,7 @@ async def cancel_lead(lead_id: str):
     if not ok:
         raise HTTPException(status_code=400, detail="Lead cannot be canceled in its current state")
     return {"ok": True}
+
 
 @router.post("/leads/{lead_id}/ignore")
 async def ignore_lead(lead_id: str):

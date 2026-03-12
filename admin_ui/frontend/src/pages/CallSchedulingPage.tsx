@@ -3,6 +3,7 @@ import axios from 'axios';
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import {
     AlertTriangle,
+    BarChart2,
     Ban,
     CalendarClock,
     Clock,
@@ -333,6 +334,12 @@ const CallSchedulingPage = () => {
     const [callHistoryLoading, setCallHistoryLoading] = useState(false);
     const [callHistoryError, setCallHistoryError] = useState<string | null>(null);
     const [callHistoryRecord, setCallHistoryRecord] = useState<any | null>(null);
+
+    const [showStatsModal, setShowStatsModal] = useState(false);
+    const [showBulkRecycleModal, setShowBulkRecycleModal] = useState(false);
+    const [bulkRecycleState, setBulkRecycleState] = useState('');
+    const [bulkRecycleMode, setBulkRecycleMode] = useState<'redial' | 'reset'>('redial');
+    const [bulkRecycling, setBulkRecycling] = useState(false);
 
     const selectedCampaign = useMemo(
         () => campaigns.find(c => c.id === selectedCampaignId) || null,
@@ -964,6 +971,43 @@ const CallSchedulingPage = () => {
         }
     };
 
+    const downloadLeadsCsv = async () => {
+        if (!selectedCampaignId) return;
+        try {
+            const res = await axios.get(`/api/outbound/campaigns/${selectedCampaignId}/leads/export.csv`, { responseType: 'blob' });
+            const cd = res.headers['content-disposition'] || '';
+            const match = cd.match(/filename="?([^"]+)"?/);
+            const filename = match ? match[1] : `campaign_leads_${selectedCampaignId.slice(0, 8)}.csv`;
+            const url = URL.createObjectURL(res.data);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e: any) {
+            setNotice({ type: 'error', message: e?.response?.data?.detail || e?.message || 'Failed to export CSV' });
+        }
+    };
+
+    const bulkRecycleLeads = async () => {
+        if (!selectedCampaignId || !bulkRecycleState) return;
+        setBulkRecycling(true);
+        try {
+            const res = await axios.post(`/api/outbound/campaigns/${selectedCampaignId}/leads/bulk-recycle`, {
+                state: bulkRecycleState,
+                mode: bulkRecycleMode
+            });
+            const recycled = res.data?.recycled ?? 0;
+            setShowBulkRecycleModal(false);
+            setNotice({ type: 'success', message: `Recycled ${recycled} lead${recycled !== 1 ? 's' : ''} (${bulkRecycleState} → pending)` });
+            if (selectedCampaignId) await refreshCampaignDetails(selectedCampaignId);
+        } catch (e: any) {
+            setNotice({ type: 'error', message: e?.response?.data?.detail || e?.message || 'Failed to bulk recycle' });
+        } finally {
+            setBulkRecycling(false);
+        }
+    };
+
     const openCallHistory = async (callRecordId: string) => {
         setCallHistoryModalId(callRecordId);
         setCallHistoryLoading(true);
@@ -1223,6 +1267,13 @@ const CallSchedulingPage = () => {
                                     </div>
                                 </div>
                                 <div className="flex flex-wrap items-center justify-end gap-2">
+                                    <button
+                                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border hover:bg-muted text-sm"
+                                        onClick={() => setShowStatsModal(true)}
+                                        title="Campaign statistics dashboard"
+                                    >
+                                        <BarChart2 className="w-4 h-4" /> Stats
+                                    </button>
                                     <button className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border hover:bg-muted text-sm" onClick={openEdit}>
                                         <Pencil className="w-4 h-4" /> Edit
                                     </button>
@@ -1361,7 +1412,7 @@ const CallSchedulingPage = () => {
                                 </button>
                             )}
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                             <div className="relative">
                                 <Search className="w-4 h-4 absolute left-2 top-2.5 text-muted-foreground" />
                                 <input
@@ -1391,6 +1442,28 @@ const CallSchedulingPage = () => {
                                 <option value="failed">failed</option>
                                 <option value="canceled">canceled</option>
                             </select>
+                            {selectedCampaignId && leadStateFilter && (
+                                <button
+                                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border hover:bg-muted text-xs font-medium"
+                                    title={`Recycle all "${leadStateFilter}" leads back to pending`}
+                                    onClick={() => {
+                                        setBulkRecycleState(leadStateFilter);
+                                        setBulkRecycleMode('redial');
+                                        setShowBulkRecycleModal(true);
+                                    }}
+                                >
+                                    <RotateCcw className="w-3 h-3" /> Recycle all &quot;{leadStateFilter}&quot;
+                                </button>
+                            )}
+                            {selectedCampaignId && (
+                                <button
+                                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border hover:bg-muted text-xs font-medium"
+                                    title="Download all leads as CSV"
+                                    onClick={downloadLeadsCsv}
+                                >
+                                    <FileDown className="w-3 h-3" /> Download CSV
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -1520,6 +1593,155 @@ const CallSchedulingPage = () => {
                     </div>
                 </div>
             </div>
+
+            {/* Campaign Stats Modal */}
+            {showStatsModal && selectedCampaign && (
+                <Modal
+                    isOpen={true}
+                    title={`Campaign Stats — ${selectedCampaign.name}`}
+                    onClose={() => setShowStatsModal(false)}
+                    size="xl"
+                >
+                    {(() => {
+                        const leadStates = stats?.lead_states || {};
+                        const outcomes = stats?.attempt_outcomes || {};
+
+                        const PIE_COLORS: Record<string, string> = {
+                            pending: '#6366f1',
+                            leased: '#8b5cf6',
+                            dialing: '#a78bfa',
+                            in_progress: '#7c3aed',
+                            completed: '#22c55e',
+                            failed: '#ef4444',
+                            canceled: '#94a3b8',
+                            answered_human: '#22c55e',
+                            voicemail_dropped: '#6366f1',
+                            no_answer: '#f59e0b',
+                            error: '#ef4444',
+                            busy: '#f97316',
+                            machine_detected: '#8b5cf6',
+                            consent_denied: '#94a3b8',
+                            consent_timeout: '#cbd5e1',
+                        };
+
+                        const renderPie = (data: Record<string, number>, label: string) => {
+                            const entries = Object.entries(data).filter(([, v]) => v > 0);
+                            const total = entries.reduce((s, [, v]) => s + v, 0);
+                            if (total === 0) return (
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="font-semibold text-sm">{label}</div>
+                                    <div className="text-xs text-muted-foreground py-6">No data yet</div>
+                                </div>
+                            );
+                            const cx = 80, cy = 80, r = 68;
+                            let startAngle = -Math.PI / 2;
+                            const slices = entries.map(([key, val]) => {
+                                const pct = val / total;
+                                const angle = pct * 2 * Math.PI;
+                                const x1 = cx + r * Math.cos(startAngle);
+                                const y1 = cy + r * Math.sin(startAngle);
+                                const x2 = cx + r * Math.cos(startAngle + angle);
+                                const y2 = cy + r * Math.sin(startAngle + angle);
+                                const large = angle > Math.PI ? 1 : 0;
+                                const d = `M${cx},${cy} L${x1},${y1} A${r},${r},0,${large},1,${x2},${y2} Z`;
+                                const color = PIE_COLORS[key] || '#64748b';
+                                const midAngle = startAngle + angle / 2;
+                                startAngle += angle;
+                                return { key, val, pct, d, color, midAngle };
+                            });
+                            return (
+                                <div className="flex flex-col items-center gap-3">
+                                    <div className="font-semibold text-sm">{label}</div>
+                                    <svg viewBox="0 0 160 160" width="160" height="160">
+                                        {slices.map(s => (
+                                            <path key={s.key} d={s.d} fill={s.color} stroke="white" strokeWidth="1.5">
+                                                <title>{s.key}: {s.val} ({(s.pct * 100).toFixed(1)}%)</title>
+                                            </path>
+                                        ))}
+                                    </svg>
+                                    <div className="w-full space-y-1">
+                                        {slices.map(s => (
+                                            <div key={s.key} className="flex items-center justify-between text-xs gap-2">
+                                                <span className="flex items-center gap-1.5">
+                                                    <span className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: s.color }} />
+                                                    {s.key}
+                                                </span>
+                                                <span className="font-mono font-medium">{s.val} ({(s.pct * 100).toFixed(1)}%)</span>
+                                            </div>
+                                        ))}
+                                        <div className="border-t pt-1 mt-1 flex justify-between text-xs font-semibold">
+                                            <span>Total</span><span className="font-mono">{total}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        };
+
+                        return (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-2">
+                                {renderPie(leadStates, 'Lead States')}
+                                {renderPie(outcomes, 'Attempt Outcomes')}
+                            </div>
+                        );
+                    })()}
+                </Modal>
+            )}
+
+            {/* Bulk Recycle Modal */}
+            {showBulkRecycleModal && (
+                <Modal
+                    isOpen={true}
+                    title="Bulk Recycle Leads"
+                    onClose={() => setShowBulkRecycleModal(false)}
+                    footer={
+                        <>
+                            <button
+                                className="px-3 py-2 rounded-lg border hover:bg-muted text-sm"
+                                onClick={() => setShowBulkRecycleModal(false)}
+                                disabled={bulkRecycling}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                className="px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-sm disabled:opacity-50"
+                                onClick={bulkRecycleLeads}
+                                disabled={bulkRecycling}
+                            >
+                                {bulkRecycling ? 'Recycling…' : `Recycle all "${bulkRecycleState}"`}
+                            </button>
+                        </>
+                    }
+                >
+                    <div className="space-y-4 py-2">
+                        <p className="text-sm">
+                            This will recycle <strong>all leads</strong> currently in state
+                            &nbsp;<span className="font-mono px-1.5 py-0.5 rounded bg-muted">{bulkRecycleState}</span>&nbsp;
+                            back to <span className="font-mono px-1.5 py-0.5 rounded bg-muted">pending</span>.
+                        </p>
+                        <div className="space-y-2">
+                            <div className="font-medium text-sm">Recycle mode</div>
+                            <label className="flex items-center gap-2 text-sm cursor-pointer">
+                                <input
+                                    type="radio"
+                                    value="redial"
+                                    checked={bulkRecycleMode === 'redial'}
+                                    onChange={() => setBulkRecycleMode('redial')}
+                                />
+                                <span><strong>Re-dial</strong> — keep attempt history, just re-queue</span>
+                            </label>
+                            <label className="flex items-center gap-2 text-sm cursor-pointer">
+                                <input
+                                    type="radio"
+                                    value="reset"
+                                    checked={bulkRecycleMode === 'reset'}
+                                    onChange={() => setBulkRecycleMode('reset')}
+                                />
+                                <span><strong>Reset</strong> — delete attempt history and reset counter to 0</span>
+                            </label>
+                        </div>
+                    </div>
+                </Modal>
+            )}
 
             {/* Campaign modal */}
             {
