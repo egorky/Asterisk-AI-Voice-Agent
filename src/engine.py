@@ -4883,7 +4883,7 @@ class Engine:
 
             # Persist call to history before removing session (Milestone 21)
             try:
-                await self._persist_call_history(session, call_id)
+                await self._persist_call_history(session, call_id, call_duration_seconds=call_duration_seconds)
             except Exception as e:
                 logger.debug("Failed to persist call history", call_id=call_id, error=str(e))
 
@@ -4961,7 +4961,7 @@ class Engine:
             if resolved_call_id:
                 _cleanup_in_progress.discard(resolved_call_id)
 
-    async def _persist_call_history(self, session: CallSession, call_id: str) -> None:
+    async def _persist_call_history(self, session: CallSession, call_id: str, call_duration_seconds: Optional[int] = None) -> None:
         """Persist call record to history database (Milestone 21)."""
         try:
             from src.core.call_history import CallRecord, get_call_history_store
@@ -9415,7 +9415,7 @@ class Engine:
                 logger.info("TTS-only broadcast: continuing in dialplan after playback", call_id=call_id)
                 try:
                     channel_id = getattr(session, "caller_channel_id", None) or call_id
-                    await self.ari_client.channels.continueInDialplan(channelId=channel_id)
+                    await self.ari_client.client.channels.continueInDialplan(channelId=channel_id)
                 except Exception as e:
                     logger.error("TTS-only broadcast: ARI continueInDialplan failed", call_id=call_id, error=str(e))
                 return  # Skip STT/LLM processing entirely
