@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import {
@@ -8,6 +8,7 @@ import {
     CalendarClock,
     Clock,
     Copy,
+    Download,
     ExternalLink,
     FileDown,
     Pause,
@@ -340,6 +341,11 @@ const CallSchedulingPage = () => {
     const [bulkRecycleState, setBulkRecycleState] = useState('');
     const [bulkRecycleMode, setBulkRecycleMode] = useState<'redial' | 'reset'>('redial');
     const [bulkRecycling, setBulkRecycling] = useState(false);
+
+    // Per-lead call recording playback
+    const leadAudioRef = useRef<HTMLAudioElement | null>(null);
+    const leadAudioBlobUrl = useRef<string | null>(null);
+    const [playingRecordingId, setPlayingRecordingId] = useState<string | null>(null);
 
     const selectedCampaign = useMemo(
         () => campaigns.find(c => c.id === selectedCampaignId) || null,
@@ -805,7 +811,62 @@ const CallSchedulingPage = () => {
         URL.revokeObjectURL(url);
     };
 
-    // Unused media upload/preview functions removed
+    const playLeadRecording = async (callHistoryCallId: string) => {
+        // Toggle off if already playing this one
+        if (playingRecordingId === callHistoryCallId) {
+            if (leadAudioRef.current) {
+                leadAudioRef.current.pause();
+                leadAudioRef.current = null;
+            }
+            if (leadAudioBlobUrl.current) {
+                URL.revokeObjectURL(leadAudioBlobUrl.current);
+                leadAudioBlobUrl.current = null;
+            }
+            setPlayingRecordingId(null);
+            return;
+        }
+        // Stop any currently playing audio
+        if (leadAudioRef.current) {
+            leadAudioRef.current.pause();
+            leadAudioRef.current = null;
+        }
+        if (leadAudioBlobUrl.current) {
+            URL.revokeObjectURL(leadAudioBlobUrl.current);
+            leadAudioBlobUrl.current = null;
+        }
+        try {
+            const res = await axios.get(`/api/calls/${callHistoryCallId}/recording.wav`, { responseType: 'blob' });
+            const blobUrl = URL.createObjectURL(res.data);
+            leadAudioBlobUrl.current = blobUrl;
+            const audio = new Audio(blobUrl);
+            leadAudioRef.current = audio;
+            setPlayingRecordingId(callHistoryCallId);
+            audio.play();
+            audio.onended = () => {
+                setPlayingRecordingId(null);
+                leadAudioRef.current = null;
+                URL.revokeObjectURL(blobUrl);
+                leadAudioBlobUrl.current = null;
+            };
+        } catch {
+            setNotice({ type: 'error', message: 'Recording not available for this call' });
+            setPlayingRecordingId(null);
+        }
+    };
+
+    const downloadLeadRecording = async (callHistoryCallId: string, leadName?: string | null) => {
+        try {
+            const res = await axios.get(`/api/calls/${callHistoryCallId}/recording.wav`, { responseType: 'blob' });
+            const blobUrl = URL.createObjectURL(res.data);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = `recording_${leadName ? leadName.replace(/[^a-zA-Z0-9]/g, '_') + '_' : ''}${callHistoryCallId}.wav`;
+            a.click();
+            URL.revokeObjectURL(blobUrl);
+        } catch {
+            setNotice({ type: 'error', message: 'Recording not available for this call' });
+        }
+    };
 
     const previewRecordingByUri = async (mediaUri: string) => {
         const uri = (mediaUri || '').trim();
@@ -1511,12 +1572,30 @@ const CallSchedulingPage = () => {
                                             <td className="py-2 px-3 font-mono">{dtmf}</td>
                                             <td className="py-2 px-3">
                                                 {l.last_call_history_call_id ? (
-                                                    <button
-                                                        className="inline-flex items-center gap-2 px-2 py-1 rounded-md border hover:bg-muted text-xs"
-                                                        onClick={() => openCallHistory(l.last_call_history_call_id as string)}
-                                                    >
-                                                        <ExternalLink className="w-3 h-3" /> Open
-                                                    </button>
+                                                    <div className="flex items-center gap-1">
+                                                        <button
+                                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border hover:bg-muted text-xs"
+                                                            onClick={() => openCallHistory(l.last_call_history_call_id as string)}
+                                                        >
+                                                            <ExternalLink className="w-3 h-3" /> Open
+                                                        </button>
+                                                        <button
+                                                            className="inline-flex items-center justify-center w-6 h-6 rounded-full border hover:bg-muted text-xs"
+                                                            onClick={() => playLeadRecording(l.last_call_history_call_id as string)}
+                                                            title={playingRecordingId === l.last_call_history_call_id ? 'Pause recording' : 'Play recording'}
+                                                        >
+                                                            {playingRecordingId === l.last_call_history_call_id
+                                                                ? <Pause className="w-3 h-3" />
+                                                                : <Play className="w-3 h-3" />}
+                                                        </button>
+                                                        <button
+                                                            className="inline-flex items-center justify-center w-6 h-6 rounded-full border hover:bg-muted text-xs"
+                                                            onClick={() => downloadLeadRecording(l.last_call_history_call_id as string, l.name)}
+                                                            title="Download recording"
+                                                        >
+                                                            <Download className="w-3 h-3" />
+                                                        </button>
+                                                    </div>
                                                 ) : (
                                                     <span className="text-muted-foreground">-</span>
                                                 )}

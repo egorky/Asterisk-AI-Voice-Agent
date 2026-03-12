@@ -4986,6 +4986,17 @@ class Engine:
                 outcome = "error"
             elif session.transfer_destination:
                 outcome = "transferred"
+            elif getattr(session, "is_outbound", False):
+                # For outbound sessions, use the AMD result to determine a more precise outcome.
+                attempt_id = str(getattr(session, "outbound_attempt_id", None) or "")
+                amd = self._outbound_attempt_amd.get(attempt_id) if attempt_id else None
+                amd_status = ((amd or {}).get("amd_status") or "").upper()
+                if amd_status in ("MACHINE", "NOTSURE"):
+                    outcome = "voicemail_dropped"
+                elif not session.conversation_history:
+                    outcome = "no_answer"
+                else:
+                    outcome = "answered_human"
             elif not session.conversation_history:
                 outcome = "abandoned"
             
