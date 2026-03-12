@@ -9415,9 +9415,17 @@ class Engine:
                 logger.info("TTS-only broadcast: continuing in dialplan after playback", call_id=call_id)
                 try:
                     channel_id = getattr(session, "caller_channel_id", None) or call_id
-                    await self.ari_client.client.channels.continueInDialplan(channelId=channel_id)
+                    await self.ari_client.continue_in_dialplan(channel_id)
                 except Exception as e:
-                    logger.error("TTS-only broadcast: ARI continueInDialplan failed", call_id=call_id, error=str(e))
+                    logger.error("TTS-only broadcast: ARI continue_in_dialplan failed", call_id=call_id, error=str(e))
+                
+                # Cleanup pipeline routing explicitly so we don't spam 'Pipeline queue full' 
+                # while Asterisk is executing the rest of the dialplan
+                self._pipeline_queues.pop(call_id, None)
+                self._pipeline_forced.pop(call_id, None)
+                if channel_id != call_id:
+                    self._pipeline_queues.pop(channel_id, None)
+                    self._pipeline_forced.pop(channel_id, None)
                 return  # Skip STT/LLM processing entirely
 
             # Accumulate into ~160ms chunks for STT while keeping ingestion responsive
