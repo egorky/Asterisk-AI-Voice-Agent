@@ -9411,13 +9411,13 @@ class Engine:
                     except Exception:
                         logger.error("TTS-only broadcast playback failed", call_id=call_id, exc_info=True)
 
-                # Auto-hangup after TTS playback
-                logger.info("TTS-only broadcast: hanging up after playback", call_id=call_id)
+                # Continue in dialplan after TTS playback to allow post-call actions
+                logger.info("TTS-only broadcast: continuing in dialplan after playback", call_id=call_id)
                 try:
                     channel_id = getattr(session, "caller_channel_id", None) or call_id
-                    await self.ari_client.hangup_channel(channel_id)
+                    await self.ari_client.channels.continueInDialplan(channelId=channel_id)
                 except Exception as e:
-                    logger.error("TTS-only broadcast: ARI hangup failed", call_id=call_id, error=str(e))
+                    logger.error("TTS-only broadcast: ARI continueInDialplan failed", call_id=call_id, error=str(e))
                 return  # Skip STT/LLM processing entirely
 
             # Accumulate into ~160ms chunks for STT while keeping ingestion responsive
