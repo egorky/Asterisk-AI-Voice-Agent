@@ -358,17 +358,19 @@ class ARIClient:
         self,
         channel_id: str,
         *,
-        context: str,
-        extension: str = "s",
-        priority: int = 1,
+        context: Optional[str] = None,
+        extension: Optional[str] = None,
+        priority: Optional[int] = None,
         label: Optional[str] = None,
     ) -> bool:
         """Return a Stasis channel back to the dialplan (POST /channels/{id}/continue)."""
-        params: Dict[str, Any] = {
-            "context": str(context),
-            "extension": str(extension),
-            "priority": str(int(priority)),
-        }
+        params: Dict[str, Any] = {}
+        if context:
+            params["context"] = str(context)
+        if extension:
+            params["extension"] = str(extension)
+        if priority is not None:
+            params["priority"] = str(int(priority))
         if label:
             params["label"] = str(label)
         resp = await self.send_command("POST", f"channels/{channel_id}/continue", params=params)

@@ -4685,14 +4685,15 @@ class Engine:
                 except Exception:
                     logger.debug("Hangup failed during cleanup", call_id=call_id, channel_id=channel_id, exc_info=True)
             
-            # Hang up caller channel ONLY if not transferred
-            if not transfer_active:
+            # Hang up caller channel ONLY if not transferred and not explicitly skipped
+            if not transfer_active and not getattr(session, 'cleanup_skip_caller_hangup', False):
                 try:
                     await self.ari_client.hangup_channel(session.caller_channel_id)
                 except Exception:
                     logger.debug("Hangup failed during cleanup", call_id=call_id, channel_id=session.caller_channel_id, exc_info=True)
             else:
-                logger.info("Skipping caller hangup - transferred to dialplan", call_id=call_id, transfer_target=getattr(session, 'transfer_target', 'unknown'))
+                reason = "transferred to dialplan" if transfer_active else "explicitly skipped"
+                logger.info("Skipping caller hangup", call_id=call_id, reason=reason)
 
             if getattr(self, 'rtp_server', None):
                 try:
@@ -9414,7 +9415,12 @@ class Engine:
                 # Continue in dialplan after TTS playback to allow post-call actions
                 logger.info("TTS-only broadcast: continuing in dialplan after playback", call_id=call_id)
                 try:
+                    # Instruct cleanup not to hang up the caller when tearing down the call bridges/sockets
+                    session.cleanup_skip_caller_hangup = True
+                    await self.session_store.upsert_call(session)
+
                     channel_id = getattr(session, "caller_channel_id", None) or call_id
+                    # Let Asterisk continue execution at the next priority in the current dialplan context
                     await self.ari_client.continue_in_dialplan(channel_id)
                 except Exception as e:
                     logger.error("TTS-only broadcast: ARI continue_in_dialplan failed", call_id=call_id, error=str(e))
