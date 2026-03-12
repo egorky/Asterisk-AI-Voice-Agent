@@ -231,20 +231,17 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
                             </p>
                         </div>
 
-                        <div className="flex items-center justify-between p-3 rounded-md border border-border bg-card/30">
-                            <div>
-                                <p className="text-sm font-medium">Auto Hang-Up After TTS</p>
-                                <p className="text-xs text-muted-foreground">Automatically disconnect the call after the message finishes playing.</p>
-                            </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    className="sr-only peer"
-                                    checked={config.auto_hangup_after_tts !== false}
-                                    onChange={(e) => updateConfig('auto_hangup_after_tts', e.target.checked)}
-                                />
-                                <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                            </label>
+                        <div className="pt-2">
+                            <FormSelect
+                                label="Action After Broadcast"
+                                tooltip="What the Asterisk engine should do when the TTS message finishes playing."
+                                options={[
+                                    { value: 'true', label: 'Hang up call' },
+                                    { value: 'false', label: 'Continue in Dialplan (Exit ARI)' }
+                                ]}
+                                value={config.auto_hangup_after_tts !== false ? 'true' : 'false'}
+                                onChange={(e) => updateConfig('auto_hangup_after_tts', e.target.value === 'true')}
+                            />
                         </div>
                     </div>
                 );
